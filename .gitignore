@@ -45,3 +45,6 @@ cache/
 .env
 .env.local
 
+# Local helper / embedded repo
+yay/
+

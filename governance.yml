@@ -1,0 +1,18 @@
+profiles:
+  default:
+    spec:
+      frameworks: [TOGAF, DDD]
+      system_instructions: "Estruture requisitos em domains, bounded_contexts e business_capabilities."
+    plan:
+      frameworks: [KLEPPMANN, AWS_SA_PRO]
+      system_instructions: "Priorize escalabilidade, consistência e tolerância a falhas."
+    work:
+      frameworks: [CKA, TERRAFORM, AWS_DEVOPS]
+      system_instructions: "Produza artefatos deployáveis, observáveis e testáveis."
+    data:
+      frameworks: [GOOGLE_ML, DATABRICKS]
+      system_instructions: "Transforme eventos em pipelines reprodutíveis."
+    doc:
+      frameworks: [TOGAF, ADR]
+      system_instructions: "Gere ADRs, runbooks e diagramas operacionais."
+

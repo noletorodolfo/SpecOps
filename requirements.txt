@@ -1,0 +1,8 @@
+# requirements.txt
+pyyaml
+sentence-transformers
+faiss-cpu
+pytest
+python-dotenv
+sentencepiece
+

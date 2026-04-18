@@ -1,0 +1,5 @@
+pyyaml
+sentence-transformers
+pytest
+python-dotenv
+sentencepiece

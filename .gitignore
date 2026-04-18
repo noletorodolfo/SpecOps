@@ -16,3 +16,7 @@ state/
 .vscode/
 *.swp
 
+# gerados
+out/
+plans/
+*.patch

@@ -4,6 +4,8 @@ _ADAPTERS = {
     "mock": "adapters.adapter_mock",
     "huggingface": "adapters.adapter_huggingface",
     "hf": "adapters.adapter_huggingface",
+    "openai": "adapters.adapter_openai",
+    "ollama": "adapters.adapter_ollama",
 }
 
 

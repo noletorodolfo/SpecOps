@@ -5,7 +5,9 @@ from rags.retrieve import retrieve_topk
 def build_prompt(phase, profile, context, feature_notes):
     governance = yaml.safe_load(open("governance.yml"))
     profile_cfg = governance["profiles"][profile][phase]
-    rag_chunks, rag_sources = retrieve_topk(phase, context.get("feature", ""), k=4)
+    rag_chunks, rag_sources = retrieve_topk(
+        profile_cfg.get("frameworks", []), context.get("feature", ""), k=4
+    )
     system = profile_cfg["system_instructions"]
     prompt_parts = [
         f"SYSTEM: {system}",

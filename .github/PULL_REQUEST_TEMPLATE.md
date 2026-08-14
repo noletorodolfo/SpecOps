@@ -1,11 +1,10 @@
-Resumo do que foi feito
+Summary of what changed
 
-Relacionado a Issue: #
+Related issue: #
 
 Checklist
-- [ ] Código lintado
-- [ ] Testes adicionados
-- [ ] Docs atualizados
-- [ ] Validators passados
-- [ ] Demo anexada
-
+- [ ] Code linted
+- [ ] Tests added
+- [ ] Docs updated
+- [ ] Validators passing
+- [ ] Demo attached

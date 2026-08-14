@@ -1,13 +1,12 @@
-**Título**
-Resumo curto
+**Title**
+Short summary
 
-**Contexto**
-O que é e por quê
+**Context**
+What this is and why it matters
 
-**Critérios de aceitação**
+**Acceptance criteria**
 - [ ] item 1
 - [ ] item 2
 
-**Estimativa**
-T-shirt
-
+**Estimate**
+T-shirt size

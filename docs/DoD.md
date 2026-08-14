@@ -1,9 +1,8 @@
 # Definition of Done
 
-- Código formatado e lintado
-- Testes unitários com coverage mínimo
-- Validators IaC passados (terraform validate, kubeval)
-- Docs atualizados (specs, plans, runbooks)
-- Patch revisado e aprovado por humano
-- Log de execução com prompt_hash e rag_sources
-
+- Code formatted and linted
+- Unit tests included, meeting the minimum coverage bar
+- IaC validators passing (`terraform validate`, `kubeval`)
+- Docs updated (specs, plans, runbooks)
+- Patch reviewed and approved by a human
+- Execution log includes `prompt_hash` and `rag_sources`

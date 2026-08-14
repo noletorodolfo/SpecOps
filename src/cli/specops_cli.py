@@ -71,8 +71,22 @@ def cmd_work(args):
     patch_path = f"out/{feature}.patch"
     with open(patch_path, "w") as f:
         f.write(resp["response_text"])
-    # A patch was generated but not yet validated: it must go through review
-    # before it becomes eligible for apply.
+
+    # Catch malformed diffs (mock placeholder text, model hallucination,
+    # truncated output) right away, instead of only discovering it when
+    # 'apply' tries to use the patch after review already passed.
+    check = subprocess.run(
+        ["git", "apply", "--check", patch_path], capture_output=True, text=True
+    )
+    if check.returncode != 0:
+        SM.advance(feature, WORK_DRAFT)
+        print(f"Generated output is not a valid git diff: {patch_path}")
+        print(check.stderr.strip())
+        print("State: WORK_DRAFT. Fix the prompt/model output and re-run 'specops work'.")
+        raise SystemExit(1)
+
+    # A patch was generated and is structurally valid, but not yet reviewed:
+    # it must pass 'specops review' before it becomes eligible for apply.
     SM.advance(feature, REVIEW_PATCH)
     print(f"Patch generated: {patch_path}")
     print("State: REVIEW_PATCH. Run 'specops review <feature>' before apply.")

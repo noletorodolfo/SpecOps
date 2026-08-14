@@ -16,5 +16,11 @@ def build_prompt(phase, profile, context, feature_notes):
     ]
     prompt_text = "\n\n".join(prompt_parts)
     prompt_hash = hashlib.sha256(prompt_text.encode()).hexdigest()
-    return {"prompt_text": prompt_text, "prompt_hash": prompt_hash, "rag_sources": rag_sources}
+    return {
+        "prompt_text": prompt_text,
+        "prompt_hash": prompt_hash,
+        "rag_sources": rag_sources,
+        "phase": phase,
+        "feature": context.get("feature", ""),
+    }
 

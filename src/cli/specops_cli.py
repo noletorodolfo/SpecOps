@@ -3,6 +3,7 @@ import argparse
 import os
 import re
 import subprocess
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -80,7 +81,13 @@ def cmd_work(args):
 def cmd_review(args):
     feature = validate_feature(args.feature) if args.feature else None
     print("Running review (validators)...")
-    result = subprocess.run(["bash", "tools/validators.sh"])
+    # Ensure venv-only tools (e.g. pytest) resolve even when this process was
+    # launched via the venv's console-script entrypoint (e.g. from Neovim)
+    # without the venv being activated in the caller's shell.
+    env = os.environ.copy()
+    venv_bin = os.path.dirname(sys.executable)
+    env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
+    result = subprocess.run(["bash", "tools/validators.sh"], env=env)
     passed = result.returncode == 0
     if feature:
         state = SM.advance(feature, APPLY_PENDING if passed else WORK_DRAFT)
@@ -131,9 +138,18 @@ def cmd_apply(args):
     else:
         subprocess.run(["git", "checkout", "-b", branch], check=True)
 
-    subprocess.run(["git", "apply", patch_path], check=True)
-    subprocess.run(["git", "add", "."], check=True)
-    subprocess.run(["git", "commit", "-m", "specops: apply patch"], check=True)
+    try:
+        subprocess.run(["git", "apply", patch_path], check=True)
+        subprocess.run(["git", "add", "."], check=True)
+        subprocess.run(["git", "commit", "-m", "specops: apply patch"], check=True)
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"Apply failed on branch '{branch}': {exc}. "
+            "The patch was not applied; fix it (or regenerate with 'specops work') "
+            "and re-run review before trying apply again."
+        )
+        raise SystemExit(1)
+
     SM.advance(feature, APPLIED)
     print("Patch applied and committed on new branch.")
 

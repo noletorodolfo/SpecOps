@@ -1,0 +1,127 @@
+import os
+import types
+from argparse import Namespace
+
+import pytest
+
+from cli import specops_cli
+from core.state_machine import StateMachine, APPLY_PENDING, WORK_DRAFT, REVIEW_PATCH
+
+
+@pytest.fixture(autouse=True)
+def isolated_cwd(tmp_path, monkeypatch):
+    """Every test runs in its own throwaway directory so state/out/logs
+    never touch the real project files."""
+    monkeypatch.chdir(tmp_path)
+    yield tmp_path
+
+
+def _write_patch(feature):
+    os.makedirs("out", exist_ok=True)
+    with open(f"out/{feature}.patch", "w") as f:
+        f.write("diff --git a/x b/x\n")
+
+
+def test_validate_feature_accepts_valid_names():
+    assert specops_cli.validate_feature("nova-feature_1") == "nova-feature_1"
+
+
+@pytest.mark.parametrize("bad", ["../etc", "feat ure", "feat;rm -rf", "feat/ure", ""])
+def test_validate_feature_rejects_invalid_names(bad):
+    with pytest.raises(SystemExit):
+        specops_cli.validate_feature(bad)
+
+
+def test_apply_blocked_when_not_apply_pending(monkeypatch):
+    feature = "blocked-feature"
+    _write_patch(feature)
+    StateMachine().advance(feature, REVIEW_PATCH)
+
+    called = {"git": False}
+
+    def fake_run(cmd, *a, **k):
+        called["git"] = True
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(specops_cli.subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit):
+        specops_cli.cmd_apply(Namespace(feature=feature))
+
+    assert called["git"] is False, "apply must not touch git before review passes"
+    assert StateMachine().load(feature)["stage"] == REVIEW_PATCH
+
+
+def test_apply_proceeds_when_apply_pending(monkeypatch):
+    feature = "ready-feature"
+    _write_patch(feature)
+    StateMachine().advance(feature, APPLY_PENDING)
+
+    monkeypatch.setattr("builtins.input", lambda _: "yes")
+
+    calls = []
+
+    def fake_run(cmd, *a, **k):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(specops_cli.subprocess, "run", fake_run)
+
+    specops_cli.cmd_apply(Namespace(feature=feature))
+
+    assert any(c[:2] == ["git", "checkout"] for c in calls)
+    assert any(c[:2] == ["git", "apply"] for c in calls)
+    assert any(c[:2] == ["git", "commit"] for c in calls)
+    assert StateMachine().load(feature)["stage"] == "APPLIED"
+
+
+def test_apply_aborted_when_user_declines(monkeypatch):
+    feature = "declined-feature"
+    _write_patch(feature)
+    StateMachine().advance(feature, APPLY_PENDING)
+
+    monkeypatch.setattr("builtins.input", lambda _: "no")
+
+    called = {"git": False}
+
+    def fake_run(cmd, *a, **k):
+        called["git"] = True
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(specops_cli.subprocess, "run", fake_run)
+
+    specops_cli.cmd_apply(Namespace(feature=feature))
+
+    assert called["git"] is False
+    assert StateMachine().load(feature)["stage"] == APPLY_PENDING
+
+
+def test_review_pass_sets_apply_pending(monkeypatch):
+    feature = "review-pass"
+    StateMachine().advance(feature, REVIEW_PATCH)
+
+    monkeypatch.setattr(
+        specops_cli.subprocess,
+        "run",
+        lambda cmd, *a, **k: types.SimpleNamespace(returncode=0),
+    )
+
+    specops_cli.cmd_review(Namespace(feature=feature))
+
+    assert StateMachine().load(feature)["stage"] == APPLY_PENDING
+
+
+def test_review_fail_resets_to_work_draft(monkeypatch):
+    feature = "review-fail"
+    StateMachine().advance(feature, REVIEW_PATCH)
+
+    monkeypatch.setattr(
+        specops_cli.subprocess,
+        "run",
+        lambda cmd, *a, **k: types.SimpleNamespace(returncode=1),
+    )
+
+    with pytest.raises(SystemExit):
+        specops_cli.cmd_review(Namespace(feature=feature))
+
+    assert StateMachine().load(feature)["stage"] == WORK_DRAFT

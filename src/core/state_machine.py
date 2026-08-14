@@ -1,7 +1,6 @@
 import json, os, time
 
 STATE_DIR = "state"
-os.makedirs(STATE_DIR, exist_ok=True)
 
 # Ordered pipeline stages. apply is only allowed once a feature reaches APPLY_PENDING.
 SPEC_DRAFT = "SPEC_DRAFT"
@@ -17,6 +16,7 @@ class StateMachine:
         pass
 
     def save(self, feature, state):
+        os.makedirs(STATE_DIR, exist_ok=True)
         path = f"{STATE_DIR}/{feature}.json"
         with open(path, "w") as f:
             json.dump(state, f, indent=2)

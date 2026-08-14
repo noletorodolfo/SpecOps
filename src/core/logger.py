@@ -1,6 +1,5 @@
 import json, os, time, uuid, re
 LOG_DIR = "logs"
-os.makedirs(LOG_DIR, exist_ok=True)
 
 def _mask_secrets(s: str) -> str:
     # basic masking for tokens (heuristic)
@@ -19,6 +18,7 @@ def audit_log(phase, prompt_meta, response, validators_run=None, status=None):
         "status": status,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ")
     }
+    os.makedirs(LOG_DIR, exist_ok=True)
     path = f"{LOG_DIR}/specops.log"
     with open(path, "a") as f:
         f.write(json.dumps(entry) + "\n")

@@ -7,7 +7,7 @@ def _mask_secrets(s: str) -> str:
     s = re.sub(r"(?:api_key|secret|token)[:=]\s*[\w-]{8,}", "<MASKED>", s, flags=re.I)
     return s
 
-def audit_log(phase, prompt_meta, response):
+def audit_log(phase, prompt_meta, response, validators_run=None, status=None):
     entry = {
         "id": str(uuid.uuid4()),
         "phase": phase,
@@ -15,6 +15,8 @@ def audit_log(phase, prompt_meta, response):
         "rag_sources": prompt_meta.get("rag_sources", []),
         "response_summary": _mask_secrets(response.get("response_text", "")[:400]),
         "model": response.get("model", "mock"),
+        "validators_run": validators_run or [],
+        "status": status,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ")
     }
     path = f"{LOG_DIR}/specops.log"

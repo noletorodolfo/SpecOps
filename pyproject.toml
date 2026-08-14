@@ -15,7 +15,9 @@ dependencies = [
   "sentence-transformers",
   "pytest",
   "python-dotenv",
-  "sentencepiece"
+  "sentencepiece",
+  "huggingface_hub",
+  "faiss-cpu"
 ]
 
 [project.scripts]

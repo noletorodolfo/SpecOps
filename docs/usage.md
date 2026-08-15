@@ -69,4 +69,4 @@ Each command prompts for a feature name, runs the matching CLI command through `
 bash tools/validators.sh
 ```
 
-Runs `terraform validate` (if `*.tf` files exist), `kubeval` (if `k8s/*.yaml` files exist), and `pytest`. This is exactly what `specops review` and CI both run — if it passes locally, it'll pass in CI.
+Runs `terraform validate` (if `*.tf` files exist), `kubeval` (if `k8s/*.yaml` files exist), `pytest`, and `jest` (if any `*.test.ts`/`*.spec.ts` files exist — needs `npm install` once). This is exactly what `specops review` and CI both run — if it passes locally, it'll pass in CI.

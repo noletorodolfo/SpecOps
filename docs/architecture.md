@@ -9,7 +9,7 @@
 | Prompt builder | Loads governance rules, pulls RAG excerpts, assembles the final prompt, hashes it for audit | `src/core/prompt_builder.py` |
 | State machine | Persists each feature's current stage; gates `apply` behind `review` | `src/core/state_machine.py` |
 | RAG | Your own operational notes, embedded with `sentence-transformers`, indexed with FAISS | `rags/`, `src/rags/retrieve.py` |
-| Validators | terraform validate, kubeval, pytest — run locally and in CI | `tools/validators.sh` |
+| Validators | terraform validate, kubeval, pytest, jest — run locally and in CI | `tools/validators.sh` |
 | Logger | Append-only JSON audit log of every phase's decision | `src/core/logger.py`, `logs/specops.log` |
 | Neovim plugin | `:SpecOps*` commands, patch preview, explicit confirm before apply | `nvim/lua/specops/` |
 

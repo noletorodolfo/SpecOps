@@ -41,6 +41,13 @@ def test_clean_diff_output_leaves_well_formed_diff_untouched():
     assert specops_cli.clean_diff_output(good) == good
 
 
+def test_clean_diff_output_repairs_doubled_plus_marker():
+    raw = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+line one\n++line two\n"
+    assert specops_cli.clean_diff_output(raw) == (
+        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+line one\n+line two\n"
+    )
+
+
 def test_clean_diff_output_repairs_wrong_hunk_count():
     raw = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,999 @@\n+line one\n+line two\n"
     assert specops_cli.clean_diff_output(raw) == (

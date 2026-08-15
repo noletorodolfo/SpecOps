@@ -56,6 +56,12 @@ def _repair_missing_plus_prefix(text):
             out.append(line)
         elif in_hunk and line and line[0] not in "+- ":
             out.append("+" + line)
+        elif in_hunk and line.startswith("++"):
+            # A diff marker is exactly one character; models occasionally
+            # double it up on one line ("++foo" instead of "+foo"). Drop
+            # exactly one extra leading '+', not a full lstrip, so content
+            # that itself starts with '+' (e.g. "+= 1") is left intact.
+            out.append(line[1:])
         else:
             out.append(line)
     return "\n".join(out)

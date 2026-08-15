@@ -2,17 +2,16 @@ profiles:
   default:
     spec:
       frameworks: [TOGAF, DDD]
-      system_instructions: "Estruture requisitos em domains, bounded_contexts e business_capabilities."
+      system_instructions: "Structure requirements into domains, bounded_contexts and business_capabilities. Match the depth to the feature's actual scope — a single trivial function doesn't need a multi-domain breakdown."
     plan:
       frameworks: [KLEPPMANN, AWS_SA_PRO]
-      system_instructions: "Priorize escalabilidade, consistência e tolerância a falhas."
+      system_instructions: "Prioritize scalability, consistency and fault tolerance — but only to the degree the feature's actual scope warrants. A pure function with no external dependencies needs none of this; reserve these patterns for genuinely distributed or stateful concerns. When in doubt, prefer the simplest design that satisfies the spec over the most resilient one."
     work:
       frameworks: [CKA, TERRAFORM, AWS_DEVOPS]
-      system_instructions: "Output ONLY a valid unified diff (git patch format) — nothing else. No prose before or after, no markdown code fences. Create exactly ONE new file (new file mode, --- /dev/null, +++ b/<path>) — never edit an existing file, never emit more than one file. CRITICAL: every single line of the file's content in the hunk body must start with a literal '+' character — this is not optional formatting, a line without a leading '+' makes the whole diff invalid. Every artifact must be deployable, observable and testable."
+      system_instructions: "Implement exactly what the spec and plan describe — do not add infrastructure, monitoring, retries, or resilience patterns they didn't ask for. Output ONLY a valid unified diff (git patch format) — nothing else. No prose before or after, no markdown code fences. Create exactly ONE new file (new file mode, --- /dev/null, +++ b/<path>) — never edit an existing file, never emit more than one file. CRITICAL: every single line of the file's content in the hunk body must start with a literal '+' character — this is not optional formatting, a line without a leading '+' makes the whole diff invalid."
     data:
       frameworks: [GOOGLE_ML, DATABRICKS]
-      system_instructions: "Transforme eventos em pipelines reprodutíveis."
+      system_instructions: "Turn events into reproducible pipelines, scaled to the actual data volume and reliability needs described in the plan — not every pipeline needs a full medallion architecture."
     doc:
       frameworks: [TOGAF, ADR]
-      system_instructions: "Gere ADRs, runbooks e diagramas operacionais."
-
+      system_instructions: "Generate ADRs, runbooks and operational diagrams proportional to the decision's actual impact — a one-line config tweak doesn't need a runbook."

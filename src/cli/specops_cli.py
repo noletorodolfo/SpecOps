@@ -33,6 +33,77 @@ def validate_feature(feature):
     return feature
 
 
+DIFF_FENCE_RE = re.compile(r"^```(?:diff|patch)?\s*\n(.*)\n```\s*$", re.DOTALL)
+DIFF_HEADER_PREFIXES = (
+    "diff --git ", "index ", "--- ", "+++ ", "@@ ",
+    "new file mode", "deleted file mode", "similarity index",
+    "rename from", "rename to", "Binary files",
+)
+
+
+def _repair_missing_plus_prefix(text):
+    """Small models routinely get the diff headers right but forget that
+    every content line inside a hunk must start with '+'/'-'/' ' — they
+    just paste the raw file content instead. Inside a hunk (after an '@@'
+    line, until the next diff header), prefix any line that isn't already
+    marked as added/removed/context with '+'."""
+    lines = text.split("\n")
+    out = []
+    in_hunk = False
+    for line in lines:
+        if line.startswith(DIFF_HEADER_PREFIXES):
+            in_hunk = line.startswith("@@ ")
+            out.append(line)
+        elif in_hunk and line and line[0] not in "+- ":
+            out.append("+" + line)
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
+HUNK_HEADER_RE = re.compile(r"^@@ -(\d+),(\d+) \+(\d+),(\d+) @@(.*)$")
+
+
+def _repair_new_file_hunk_count(text):
+    """For a single new-file hunk (@@ -0,0 +N,M @@), the model frequently
+    invents a wrong M. Recompute it from the actual number of '+' lines
+    that follow, since `git apply` rejects a mismatched count outright."""
+    lines = text.split("\n")
+    out = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = HUNK_HEADER_RE.match(line)
+        if m and m.group(1) == "0" and m.group(2) == "0":
+            body = []
+            j = i + 1
+            while j < len(lines) and not lines[j].startswith(DIFF_HEADER_PREFIXES):
+                body.append(lines[j])
+                j += 1
+            plus_count = sum(1 for l in body if l.startswith("+"))
+            out.append(f"@@ -0,0 +{m.group(3)},{plus_count} @@{m.group(5)}")
+            out.extend(body)
+            i = j
+            continue
+        out.append(line)
+        i += 1
+    return "\n".join(out)
+
+
+def clean_diff_output(text):
+    """Real models routinely wrap a diff in a markdown code fence despite
+    being told not to, forget the leading '+' on content lines, or write
+    a hunk header with the wrong line count. Repair all three, since
+    `git apply` is strict about each."""
+    text = text.strip()
+    fence = DIFF_FENCE_RE.match(text)
+    if fence:
+        text = fence.group(1).strip()
+    text = _repair_missing_plus_prefix(text)
+    text = _repair_new_file_hunk_count(text)
+    return text + "\n"
+
+
 def cmd_brainstorm(args):
     feature = validate_feature(args.feature)
     context = {"feature": feature}
@@ -49,8 +120,13 @@ def cmd_brainstorm(args):
 
 def cmd_plan(args):
     feature = validate_feature(args.feature)
-    context = {"feature": feature, "spec_file": args.spec}
-    prompt_meta = build_prompt("plan", "default", context, "")
+    spec_path = args.spec or f"specs/{feature}.md"
+    spec_content = ""
+    if os.path.exists(spec_path):
+        with open(spec_path) as f:
+            spec_content = f.read()
+    context = {"feature": feature, "spec_file": spec_path}
+    prompt_meta = build_prompt("plan", "default", context, spec_content)
     resp = get_send_prompt()(prompt_meta["prompt_text"], {"meta": prompt_meta})
     audit_log("PLAN", prompt_meta, resp, status=PLAN_DRAFT)
     path = f"plans/{feature}/plan.yaml"
@@ -63,14 +139,19 @@ def cmd_plan(args):
 
 def cmd_work(args):
     feature = validate_feature(args.feature)
-    context = {"feature": feature, "plan_file": args.plan}
-    prompt_meta = build_prompt("work", "default", context, "")
+    plan_path = args.plan or f"plans/{feature}/plan.yaml"
+    plan_content = ""
+    if os.path.exists(plan_path):
+        with open(plan_path) as f:
+            plan_content = f.read()
+    context = {"feature": feature, "plan_file": plan_path}
+    prompt_meta = build_prompt("work", "default", context, plan_content)
     resp = get_send_prompt()(prompt_meta["prompt_text"], {"meta": prompt_meta})
     audit_log("WORK", prompt_meta, resp, status=WORK_DRAFT)
     os.makedirs("out", exist_ok=True)
     patch_path = f"out/{feature}.patch"
     with open(patch_path, "w") as f:
-        f.write(resp["response_text"])
+        f.write(clean_diff_output(resp["response_text"]))
 
     # Catch malformed diffs (mock placeholder text, model hallucination,
     # truncated output) right away, instead of only discovering it when

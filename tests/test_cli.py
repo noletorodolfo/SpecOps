@@ -22,6 +22,32 @@ def _write_patch(feature):
         f.write("diff --git a/x b/x\n")
 
 
+def test_clean_diff_output_strips_markdown_fence():
+    wrapped = "```diff\n--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,1 @@\n+print('hi')\n```"
+    assert specops_cli.clean_diff_output(wrapped) == (
+        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,1 @@\n+print('hi')\n"
+    )
+
+
+def test_clean_diff_output_repairs_missing_plus_prefix():
+    raw = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\nline one\nline two\n"
+    assert specops_cli.clean_diff_output(raw) == (
+        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+line one\n+line two\n"
+    )
+
+
+def test_clean_diff_output_leaves_well_formed_diff_untouched():
+    good = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,1 @@\n+print('hi')\n"
+    assert specops_cli.clean_diff_output(good) == good
+
+
+def test_clean_diff_output_repairs_wrong_hunk_count():
+    raw = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,999 @@\n+line one\n+line two\n"
+    assert specops_cli.clean_diff_output(raw) == (
+        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+line one\n+line two\n"
+    )
+
+
 def test_validate_feature_accepts_valid_names():
     assert specops_cli.validate_feature("nova-feature_1") == "nova-feature_1"
 

@@ -44,3 +44,5 @@ To use a real model instead of the mock adapter, set `SPECOPS_MODEL=huggingface`
 - [docs/usage.md](docs/usage.md) — CLI walkthrough, adapters, environment variables
 - [docs/architecture.md](docs/architecture.md) — components, state machine, RAG design
 - [docs/DoD.md](docs/DoD.md) — what "done" means for a change here
+- [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, commit conventions, branching
+- [SECURITY.md](SECURITY.md) — secrets handling, the apply gate, what to do if something leaks

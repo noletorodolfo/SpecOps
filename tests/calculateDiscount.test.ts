@@ -10,14 +10,14 @@ describe('calculateDiscount function', () => {
     });
 
     test('should throw an error for invalid negative price', () => {
-        expect(() => calculateDiscount(-100, 10)).toThrowError("Invalid price or percentage");
+        expect(() => calculateDiscount(-100, 10)).toThrow("Invalid price or percentage");
     });
 
     test('should throw an error for invalid negative percentage', () => {
-        expect(() => calculateDiscount(100, -10)).toThrowError("Invalid price or percentage");
+        expect(() => calculateDiscount(100, -10)).toThrow("Invalid price or percentage");
     });
 
     test('should throw an error for invalid percentage above 100', () => {
-        expect(() => calculateDiscount(100, 110)).toThrowError("Invalid price or percentage");
+        expect(() => calculateDiscount(100, 110)).toThrow("Invalid price or percentage");
     });
 });

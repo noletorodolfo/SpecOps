@@ -6,10 +6,11 @@ def _mask_secrets(s: str) -> str:
     s = re.sub(r"(?:api_key|secret|token)[:=]\s*[\w-]{8,}", "<MASKED>", s, flags=re.I)
     return s
 
-def audit_log(phase, prompt_meta, response, validators_run=None, status=None):
+def audit_log(phase, prompt_meta, response, validators_run=None, status=None, feature=None):
     entry = {
         "id": str(uuid.uuid4()),
         "phase": phase,
+        "feature": feature or prompt_meta.get("feature"),
         "prompt_hash": prompt_meta["prompt_hash"],
         "rag_sources": prompt_meta.get("rag_sources", []),
         "response_summary": _mask_secrets(response.get("response_text", "")[:400]),

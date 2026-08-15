@@ -212,6 +212,7 @@ def test_apply_proceeds_when_apply_pending(monkeypatch):
     StateMachine().advance(feature, APPLY_PENDING)
 
     monkeypatch.setattr("builtins.input", lambda _: "yes")
+    monkeypatch.setattr(specops_cli.certificate, "generate", lambda f: f"certificates/CHG-0001-{f}.md")
 
     calls = []
 
@@ -229,7 +230,46 @@ def test_apply_proceeds_when_apply_pending(monkeypatch):
     assert any(c == ["git", "checkout", "-b", f"feat/{feature}"] for c in calls)
     assert any(c[:2] == ["git", "apply"] for c in calls)
     assert any(c[:2] == ["git", "commit"] for c in calls)
+    # two commits: the patch itself, then the certificate follow-up
+    assert sum(1 for c in calls if c[:2] == ["git", "commit"]) == 2
+    assert any(c == ["git", "add", f"certificates/CHG-0001-{feature}.md"] for c in calls)
     assert StateMachine().load(feature)["stage"] == "APPLIED"
+
+
+def test_apply_only_stages_the_patchs_own_files_not_unrelated_work(monkeypatch):
+    feature = "scoped-feature"
+    os.makedirs("out", exist_ok=True)
+    with open(f"out/{feature}.patch", "w") as f:
+        f.write(
+            "diff --git a/new_thing.py b/new_thing.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/new_thing.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+x = 1\n"
+        )
+    # simulate unrelated work-in-progress sitting uncommitted elsewhere
+    with open("some_other_file.py", "w") as f:
+        f.write("# unrelated, mid-edit, not part of this feature\n")
+    StateMachine().advance(feature, APPLY_PENDING)
+
+    monkeypatch.setattr("builtins.input", lambda _: "yes")
+    monkeypatch.setattr(specops_cli.certificate, "generate", lambda f: f"certificates/CHG-0001-{f}.md")
+
+    calls = []
+
+    def fake_run(cmd, *a, **k):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=1, stdout="main\n")
+
+    monkeypatch.setattr(specops_cli.subprocess, "run", fake_run)
+
+    specops_cli.cmd_apply(Namespace(feature=feature))
+
+    add_calls = [c for c in calls if c[:2] == ["git", "add"] and "new_thing.py" in c]
+    assert len(add_calls) == 1
+    assert "some_other_file.py" not in add_calls[0]
+    assert "." not in add_calls[0]
 
 
 def test_apply_replaces_stale_branch_from_a_previous_apply(monkeypatch):
@@ -238,6 +278,7 @@ def test_apply_replaces_stale_branch_from_a_previous_apply(monkeypatch):
     StateMachine().advance(feature, APPLY_PENDING)
 
     monkeypatch.setattr("builtins.input", lambda _: "yes")
+    monkeypatch.setattr(specops_cli.certificate, "generate", lambda f: f"certificates/CHG-0001-{f}.md")
 
     calls = []
 

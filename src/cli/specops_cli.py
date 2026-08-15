@@ -22,6 +22,7 @@ from core.state_machine import (
     APPLIED,
 )
 from core.logger import audit_log
+from core import certificate
 
 SM = StateMachine()
 FEATURE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -315,6 +316,7 @@ def cmd_review(args):
             resp,
             validators_run=["tools/validators.sh"],
             status=state["stage"],
+            feature=feature,
         )
         if passed:
             print(f"Review passed. State: APPLY_PENDING.")
@@ -367,7 +369,18 @@ def cmd_apply(args):
 
     try:
         subprocess.run(["git", "apply", patch_path], check=True)
-        subprocess.run(["git", "add", "."], check=True)
+        with open(patch_path) as f:
+            patch_content = f.read()
+        # Stage only what this feature actually touches — the patch's own
+        # new files plus its spec/plan artifacts — never `git add .`. A
+        # blanket add would sweep in any unrelated work-in-progress sitting
+        # uncommitted elsewhere in the working tree into this feature's
+        # commit, silently mixing unrelated changes together.
+        files_to_add = list(_extract_new_file_contents(patch_content).keys())
+        for extra in (f"specs/{feature}.md", f"plans/{feature}/plan.yaml"):
+            if os.path.exists(extra):
+                files_to_add.append(extra)
+        subprocess.run(["git", "add", *files_to_add], check=True)
         subprocess.run(["git", "commit", "-m", "specops: apply patch"], check=True)
     except subprocess.CalledProcessError as exc:
         print(
@@ -379,6 +392,17 @@ def cmd_apply(args):
 
     SM.advance(feature, APPLIED)
     print("Patch applied and committed on new branch.")
+
+    # Generated after the commit exists, since it records that commit's own
+    # SHA — so it lands in its own small follow-up commit rather than the
+    # code-change commit itself.
+    cert_path = certificate.generate(feature)
+    subprocess.run(["git", "add", cert_path], check=True)
+    subprocess.run(
+        ["git", "commit", "-m", f"specops: add change certificate for {feature}"],
+        check=True,
+    )
+    print(f"Change certificate: {cert_path}")
 
 
 def main():

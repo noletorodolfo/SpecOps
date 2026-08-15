@@ -44,24 +44,40 @@ DIFF_HEADER_PREFIXES = (
 def _repair_missing_plus_prefix(text):
     """Small models routinely get the diff headers right but forget that
     every content line inside a hunk must start with '+'/'-'/' ' — they
-    just paste the raw file content instead. Inside a hunk (after an '@@'
-    line, until the next diff header), prefix any line that isn't already
-    marked as added/removed/context with '+'."""
+    just paste the raw file content instead. This is most dangerous in a
+    new-file hunk (--- /dev/null): a content line that happens to start
+    with a space, like ordinary Python indentation, looks exactly like a
+    valid diff *context* marker — except new-file hunks can't have
+    context lines at all, every line there is an addition, so the usual
+    "leave lines starting with ' ' alone" heuristic would silently corrupt
+    indented code. Track whether we're in a new-file hunk and, if so,
+    require every line to start with '+' with no exceptions."""
     lines = text.split("\n")
     out = []
     in_hunk = False
+    is_new_file = False
     for line in lines:
         if line.startswith(DIFF_HEADER_PREFIXES):
+            if line.startswith("--- "):
+                is_new_file = line.strip() == "--- /dev/null"
             in_hunk = line.startswith("@@ ")
             out.append(line)
-        elif in_hunk and line and line[0] not in "+- ":
-            out.append("+" + line)
-        elif in_hunk and line.startswith("++"):
+        elif not in_hunk:
+            out.append(line)
+        elif line.startswith("\\ "):
+            # The "\ No newline at end of file" annotation is not a
+            # content line and must never get a '+' — it stands alone.
+            out.append(line)
+        elif line.startswith("++"):
             # A diff marker is exactly one character; models occasionally
             # double it up on one line ("++foo" instead of "+foo"). Drop
             # exactly one extra leading '+', not a full lstrip, so content
             # that itself starts with '+' (e.g. "+= 1") is left intact.
             out.append(line[1:])
+        elif line.startswith("+"):
+            out.append(line)
+        elif is_new_file or line[:1] not in ("-", " "):
+            out.append("+" + line)
         else:
             out.append(line)
     return "\n".join(out)

@@ -22,6 +22,61 @@ def _write_patch(feature):
         f.write("diff --git a/x b/x\n")
 
 
+def test_clean_diff_output_leaves_no_newline_marker_unprefixed():
+    raw = (
+        "--- /dev/null\n"
+        "+++ b/x.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+print('hi')\n"
+        "\\ No newline at end of file\n"
+    )
+    out = specops_cli.clean_diff_output(raw)
+    assert "+\\ No newline" not in out
+    assert "\\ No newline at end of file" in out
+
+
+def test_clean_diff_output_preserves_indented_code_in_new_file_hunk():
+    raw = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+def f():\n    return 1\n"
+    assert specops_cli.clean_diff_output(raw) == (
+        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+def f():\n+    return 1\n"
+    )
+
+
+def test_clean_diff_output_repairs_each_file_in_a_multi_file_diff():
+    raw = (
+        "diff --git a/impl.py b/impl.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/impl.py\n"
+        "@@ -0,0 +1,999 @@\n"
+        "def greet(name):\n"
+        "    return name\n"
+        "diff --git a/test_impl.py b/test_impl.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/test_impl.py\n"
+        "@@ -0,0 +1,999 @@\n"
+        "+import impl\n"
+        "assert impl.greet('x')\n"
+    )
+    assert specops_cli.clean_diff_output(raw) == (
+        "diff --git a/impl.py b/impl.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/impl.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+def greet(name):\n"
+        "+    return name\n"
+        "diff --git a/test_impl.py b/test_impl.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/test_impl.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+import impl\n"
+        "+assert impl.greet('x')\n"
+    )
+
+
 def test_clean_diff_output_strips_markdown_fence():
     wrapped = "```diff\n--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,1 @@\n+print('hi')\n```"
     assert specops_cli.clean_diff_output(wrapped) == (

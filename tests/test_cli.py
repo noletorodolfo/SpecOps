@@ -42,6 +42,40 @@ def test_clean_diff_output_preserves_indented_code_in_new_file_hunk():
     )
 
 
+def test_extract_new_file_contents_reconstructs_multi_file_diff():
+    diff = (
+        "diff --git a/a.py b/a.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/a.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+def f():\n"
+        "+    return 1\n"
+        "diff --git a/b.py b/b.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/b.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+x = 1\n"
+    )
+    files = specops_cli._extract_new_file_contents(diff)
+    assert files == {"a.py": "def f():\n    return 1", "b.py": "x = 1"}
+
+
+def test_check_python_syntax_flags_squashed_lines():
+    # A model occasionally joins two logical lines with a literal ' +'
+    # instead of a real newline; it's still a syntactically valid diff
+    # line, but the resulting Python is broken.
+    files = {
+        "bad.py": "def f(self): +        return 1 +",
+        "good.py": "def f():\n    return 1\n",
+        "ignored.txt": "not python )(",
+    }
+    errors = specops_cli._check_python_syntax(files)
+    assert len(errors) == 1
+    assert errors[0].startswith("bad.py:")
+
+
 def test_clean_diff_output_repairs_each_file_in_a_multi_file_diff():
     raw = (
         "diff --git a/impl.py b/impl.py\n"

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import ast
 import os
 import re
 import subprocess
@@ -126,6 +127,54 @@ def clean_diff_output(text):
     return text + "\n"
 
 
+NEW_FILE_PATH_RE = re.compile(r"^\+\+\+ b/(.+)$")
+
+
+def _extract_new_file_contents(text):
+    """Reconstruct each new file's final content directly from an
+    already-repaired diff, without touching the working tree. Used to run
+    language-specific checks (e.g. Python syntax) before the patch is even
+    applied — `git apply --check` only validates diff *mechanics*, it has
+    no idea whether the resulting file is valid code."""
+    files = {}
+    current_path = None
+    content_lines = []
+    for line in text.split("\n"):
+        m = NEW_FILE_PATH_RE.match(line)
+        if m:
+            if current_path is not None:
+                files[current_path] = "\n".join(content_lines)
+            current_path = m.group(1)
+            content_lines = []
+        elif (
+            current_path is not None
+            and not line.startswith("@@ ")
+            and line.startswith(DIFF_HEADER_PREFIXES)
+        ):
+            files[current_path] = "\n".join(content_lines)
+            current_path = None
+            content_lines = []
+        elif current_path is not None and line.startswith("+"):
+            content_lines.append(line[1:])
+        # non-'+' lines inside a hunk body (e.g. the no-newline marker)
+        # aren't part of the file's actual content, so they're skipped.
+    if current_path is not None:
+        files[current_path] = "\n".join(content_lines)
+    return files
+
+
+def _check_python_syntax(files):
+    errors = []
+    for path, content in files.items():
+        if not path.endswith(".py"):
+            continue
+        try:
+            ast.parse(content)
+        except SyntaxError as exc:
+            errors.append(f"{path}:{exc.lineno}: {exc.msg}")
+    return errors
+
+
 def cmd_brainstorm(args):
     feature = validate_feature(args.feature)
     context = {"feature": feature}
@@ -172,8 +221,9 @@ def cmd_work(args):
     audit_log("WORK", prompt_meta, resp, status=WORK_DRAFT)
     os.makedirs("out", exist_ok=True)
     patch_path = f"out/{feature}.patch"
+    cleaned = clean_diff_output(resp["response_text"])
     with open(patch_path, "w") as f:
-        f.write(clean_diff_output(resp["response_text"]))
+        f.write(cleaned)
 
     # Catch malformed diffs (mock placeholder text, model hallucination,
     # truncated output) right away, instead of only discovering it when
@@ -185,6 +235,21 @@ def cmd_work(args):
         SM.advance(feature, WORK_DRAFT)
         print(f"Generated output is not a valid git diff: {patch_path}")
         print(check.stderr.strip())
+        print("State: WORK_DRAFT. Fix the prompt/model output and re-run 'specops work'.")
+        raise SystemExit(1)
+
+    # `git apply --check` only validates diff *mechanics* — it has no idea
+    # whether the resulting file is valid code. Models occasionally squash
+    # what should be separate lines onto one physical line (using a literal
+    # ' +' instead of a real newline+marker), which still parses as a
+    # structurally valid diff but produces broken source. Catch that here,
+    # for Python files, before it ever reaches review.
+    py_errors = _check_python_syntax(_extract_new_file_contents(cleaned))
+    if py_errors:
+        SM.advance(feature, WORK_DRAFT)
+        print(f"Generated file(s) are not valid Python: {patch_path}")
+        for err in py_errors:
+            print(f"  {err}")
         print("State: WORK_DRAFT. Fix the prompt/model output and re-run 'specops work'.")
         raise SystemExit(1)
 

@@ -26,6 +26,9 @@ cd SpecOps
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 
+# needed only if you'll generate TypeScript/TSX (syntax-check tooling)
+npm install
+
 # index your RAG notes
 python tools/rag_ingest.py
 

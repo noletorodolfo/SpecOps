@@ -1,0 +1,8 @@
+{
+  "name": "specops-ts-tooling",
+  "private": true,
+  "description": "Node-side tooling used by SpecOps to syntax-check generated TypeScript/JavaScript files before review — not a runnable app.",
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

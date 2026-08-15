@@ -76,6 +76,38 @@ def test_check_python_syntax_flags_squashed_lines():
     assert errors[0].startswith("bad.py:")
 
 
+def test_check_typescript_syntax_flags_broken_file():
+    files = {
+        "good.ts": "export function f(): number {\n    return 1;\n}\n",
+        "bad.ts": "export function f(): number {\n    return 1;\n",  # missing '}'
+        "ignored.py": "not typescript )(",
+    }
+    errors = specops_cli._check_typescript_syntax(files)
+    assert len(errors) == 1
+    assert errors[0].startswith("bad.ts:")
+
+
+def test_check_typescript_syntax_ignores_unresolved_imports_and_test_globals():
+    # Syntax-only: a spec file referencing an unresolved import and
+    # jest-style globals (describe/it/expect) with no @types installed
+    # must NOT be flagged — that's a type/semantic concern, not syntax.
+    files = {
+        "x.spec.ts": (
+            "import { f } from '../src/f';\n"
+            "describe('f', () => {\n"
+            "    it('works', () => {\n"
+            "        expect(f()).toBe(1);\n"
+            "    });\n"
+            "});\n"
+        ),
+    }
+    assert specops_cli._check_typescript_syntax(files) == []
+
+
+def test_check_typescript_syntax_skips_when_no_ts_files():
+    assert specops_cli._check_typescript_syntax({"a.py": "x = 1"}) == []
+
+
 def test_clean_diff_output_repairs_each_file_in_a_multi_file_diff():
     raw = (
         "diff --git a/impl.py b/impl.py\n"

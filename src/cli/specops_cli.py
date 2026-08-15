@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -175,6 +176,38 @@ def _check_python_syntax(files):
     return errors
 
 
+TS_CHECKER = os.path.join(os.path.dirname(__file__), "..", "..", "tools", "ts_syntax_check.mjs")
+
+
+def _check_typescript_syntax(files):
+    """Same idea as _check_python_syntax, for .ts/.tsx files: syntax only,
+    via the TypeScript compiler's parser (tools/ts_syntax_check.mjs) — not
+    full type-checking, which would need the file's imports and any
+    @types packages (jest, etc.) to actually resolve and would false-flag
+    perfectly valid generated code."""
+    ts_files = {p: c for p, c in files.items() if p.endswith((".ts", ".tsx"))}
+    if not ts_files:
+        return []
+    if subprocess.run(["node", "--version"], capture_output=True).returncode != 0:
+        return []  # node not available in this environment; skip rather than block
+
+    errors = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for path, content in ts_files.items():
+            # Keep the real extension so the checker parses TSX correctly;
+            # the rest of the name/path doesn't matter, it's a scratch copy.
+            suffix = ".tsx" if path.endswith(".tsx") else ".ts"
+            tmp_path = os.path.join(tmp, f"check{suffix}")
+            with open(tmp_path, "w") as f:
+                f.write(content)
+            result = subprocess.run(
+                ["node", TS_CHECKER, tmp_path], capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                errors.append(f"{path}: {result.stderr.strip().replace(tmp_path, path)}")
+    return errors
+
+
 def cmd_brainstorm(args):
     feature = validate_feature(args.feature)
     context = {"feature": feature}
@@ -244,11 +277,12 @@ def cmd_work(args):
     # ' +' instead of a real newline+marker), which still parses as a
     # structurally valid diff but produces broken source. Catch that here,
     # for Python files, before it ever reaches review.
-    py_errors = _check_python_syntax(_extract_new_file_contents(cleaned))
-    if py_errors:
+    new_files = _extract_new_file_contents(cleaned)
+    syntax_errors = _check_python_syntax(new_files) + _check_typescript_syntax(new_files)
+    if syntax_errors:
         SM.advance(feature, WORK_DRAFT)
-        print(f"Generated file(s) are not valid Python: {patch_path}")
-        for err in py_errors:
+        print(f"Generated file(s) failed a syntax check: {patch_path}")
+        for err in syntax_errors:
             print(f"  {err}")
         print("State: WORK_DRAFT. Fix the prompt/model output and re-run 'specops work'.")
         raise SystemExit(1)

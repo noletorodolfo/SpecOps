@@ -7,6 +7,7 @@ This is currently a solo project, but the workflow below is meant to hold up eve
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
+npm install
 python tools/rag_ingest.py
 ```
 

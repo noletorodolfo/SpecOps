@@ -21,7 +21,7 @@ SPEC_DRAFT → PLAN_DRAFT → WORK_DRAFT → REVIEW_PATCH → APPLY_PENDING → 
 
 - `brainstorm` writes a spec and sets the feature's stage to `SPEC_DRAFT`.
 - `plan` writes a plan and advances to `PLAN_DRAFT`.
-- `work` generates a patch, then immediately runs `git apply --check` against it. A malformed diff (mock placeholder, truncated model output, hallucinated hunk) resets the stage to `WORK_DRAFT` right there instead of only failing later at apply time. A valid patch advances to `REVIEW_PATCH`.
+- `work` generates a patch, then immediately runs `git apply --check` against it. A malformed diff (mock placeholder, truncated model output, hallucinated hunk) resets the stage to `WORK_DRAFT` right there instead of only failing later at apply time. `git apply --check` only validates diff *mechanics*, though — it has no idea whether the resulting file is valid code. New `.py` files get an `ast.parse` check, new `.ts`/`.tsx` files get a syntax-only check via the TypeScript compiler's parser (`tools/ts_syntax_check.mjs`, needs `npm install` once). Either failing also resets to `WORK_DRAFT`. Only once the patch is both a valid diff and its new files parse does the stage advance to `REVIEW_PATCH`.
 - `review` runs `tools/validators.sh`. Passing moves the stage to `APPLY_PENDING`; failing resets it to `WORK_DRAFT`.
 - `apply` refuses to run unless the stage is exactly `APPLY_PENDING`. It asks for an explicit `yes`, checks out a new `feat/<feature>` branch, applies the patch, and commits.
 

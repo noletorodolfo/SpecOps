@@ -7,6 +7,9 @@ __pycache__/
 env/
 venv/
 
+# Node (tools/ts_syntax_check.mjs dependency only, not an app)
+node_modules/
+
 # Project metadata and packaging
 *.egg-info/
 dist/

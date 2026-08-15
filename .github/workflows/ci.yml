@@ -21,6 +21,14 @@ jobs:
       - name: Install SpecOps (editable) and its dependencies
         run: pip install -e .
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install TypeScript syntax-check tooling
+        run: npm install
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false

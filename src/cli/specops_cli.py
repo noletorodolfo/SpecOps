@@ -372,14 +372,16 @@ def cmd_apply(args):
         with open(patch_path) as f:
             patch_content = f.read()
         # Stage only what this feature actually touches — the patch's own
-        # new files plus its spec/plan artifacts — never `git add .`. A
-        # blanket add would sweep in any unrelated work-in-progress sitting
+        # new files plus its spec artifact — never `git add .`. A blanket
+        # add would sweep in any unrelated work-in-progress sitting
         # uncommitted elsewhere in the working tree into this feature's
-        # commit, silently mixing unrelated changes together.
+        # commit, silently mixing unrelated changes together. plans/ and
+        # out/ are gitignored on purpose (ephemeral working files) and stay
+        # that way — only specs/ was ever meant to be part of the record.
         files_to_add = list(_extract_new_file_contents(patch_content).keys())
-        for extra in (f"specs/{feature}.md", f"plans/{feature}/plan.yaml"):
-            if os.path.exists(extra):
-                files_to_add.append(extra)
+        spec_path = f"specs/{feature}.md"
+        if os.path.exists(spec_path):
+            files_to_add.append(spec_path)
         subprocess.run(["git", "add", *files_to_add], check=True)
         subprocess.run(["git", "commit", "-m", "specops: apply patch"], check=True)
     except subprocess.CalledProcessError as exc:

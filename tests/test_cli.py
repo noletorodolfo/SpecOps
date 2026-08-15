@@ -151,16 +151,50 @@ def test_apply_proceeds_when_apply_pending(monkeypatch):
 
     def fake_run(cmd, *a, **k):
         calls.append(cmd)
-        return types.SimpleNamespace(returncode=0)
+        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return types.SimpleNamespace(returncode=0, stdout="main\n")
+        return types.SimpleNamespace(returncode=1)  # branch doesn't exist yet
 
     monkeypatch.setattr(specops_cli.subprocess, "run", fake_run)
 
     specops_cli.cmd_apply(Namespace(feature=feature))
 
     assert any(c[:2] == ["git", "checkout"] for c in calls)
+    assert any(c == ["git", "checkout", "-b", f"feat/{feature}"] for c in calls)
     assert any(c[:2] == ["git", "apply"] for c in calls)
     assert any(c[:2] == ["git", "commit"] for c in calls)
     assert StateMachine().load(feature)["stage"] == "APPLIED"
+
+
+def test_apply_replaces_stale_branch_from_a_previous_apply(monkeypatch):
+    feature = "redo-feature"
+    _write_patch(feature)
+    StateMachine().advance(feature, APPLY_PENDING)
+
+    monkeypatch.setattr("builtins.input", lambda _: "yes")
+
+    calls = []
+
+    def fake_run(cmd, *a, **k):
+        calls.append(cmd)
+        if cmd[:3] == ["git", "rev-parse", "--abbrev-ref"]:
+            return types.SimpleNamespace(returncode=0, stdout="main\n")
+        if cmd[:3] == ["git", "rev-parse", "--verify"]:
+            return types.SimpleNamespace(returncode=0)  # branch already exists
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(specops_cli.subprocess, "run", fake_run)
+
+    specops_cli.cmd_apply(Namespace(feature=feature))
+
+    branch = f"feat/{feature}"
+    assert any(c == ["git", "branch", "-D", branch] for c in calls), (
+        "an existing branch from a prior apply must be replaced, not reused"
+    )
+    assert any(c == ["git", "checkout", "-b", branch] for c in calls)
+    # Never a plain checkout of the existing branch — that's exactly what
+    # fails when freshly regenerated, untracked files collide with it.
+    assert not any(c == ["git", "checkout", branch] for c in calls)
 
 
 def test_apply_aborted_when_user_declines(monkeypatch):

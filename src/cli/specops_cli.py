@@ -247,12 +247,23 @@ def cmd_apply(args):
         return
 
     branch = f"feat/{feature}"
-    existing = subprocess.run(
-        ["git", "rev-parse", "--verify", branch], capture_output=True
-    )
-    if existing.returncode == 0:
-        subprocess.run(["git", "checkout", branch], check=True)
-    else:
+    current_branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+
+    if current_branch != branch:
+        exists = (
+            subprocess.run(["git", "rev-parse", "--verify", branch], capture_output=True).returncode
+            == 0
+        )
+        if exists:
+            # A previous apply already used this branch name. Each apply is a
+            # fresh attempt against regenerated spec/plan/patch content, so
+            # start the branch over from the current commit instead of
+            # reusing stale history — reusing it via a plain checkout also
+            # fails outright whenever freshly regenerated (untracked) specs
+            # or plans collide with what that old branch already tracked.
+            subprocess.run(["git", "branch", "-D", branch], check=True)
         subprocess.run(["git", "checkout", "-b", branch], check=True)
 
     try:

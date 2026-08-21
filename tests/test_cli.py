@@ -17,8 +17,8 @@ def isolated_cwd(tmp_path, monkeypatch):
 
 
 def _write_patch(feature):
-    os.makedirs("out", exist_ok=True)
-    with open(f"out/{feature}.patch", "w") as f:
+    os.makedirs(".specops/out", exist_ok=True)
+    with open(f".specops/out/{feature}.patch", "w") as f:
         f.write("diff --git a/x b/x\n")
 
 
@@ -169,6 +169,36 @@ def test_clean_diff_output_repairs_doubled_plus_marker():
     )
 
 
+def test_clean_diff_output_inserts_missing_hunk_header():
+    # A model sometimes jumps straight from '+++ b/<path>' to content
+    # lines, skipping the '@@ -0,0 +N,M @@' header entirely. git apply
+    # --check tolerates this but produces an empty file when applied for
+    # real, so this must be repaired, not just detected.
+    raw = "--- /dev/null\n+++ b/x.py\n+def f():\n+    return 1\n"
+    assert specops_cli.clean_diff_output(raw) == (
+        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+def f():\n+    return 1\n"
+    )
+
+
+def test_clean_diff_output_inserts_missing_hunk_header_multi_file():
+    raw = (
+        "diff --git a/a.py b/a.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/a.py\n"
+        "+x = 1\n"
+        "diff --git a/b.py b/b.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/b.py\n"
+        "+y = 2\n"
+        "+z = 3\n"
+    )
+    out = specops_cli.clean_diff_output(raw)
+    assert "+++ b/a.py\n@@ -0,0 +1,1 @@\n+x = 1\n" in out
+    assert "+++ b/b.py\n@@ -0,0 +1,2 @@\n+y = 2\n+z = 3\n" in out
+
+
 def test_clean_diff_output_repairs_wrong_hunk_count():
     raw = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,999 @@\n+line one\n+line two\n"
     assert specops_cli.clean_diff_output(raw) == (
@@ -212,7 +242,7 @@ def test_apply_proceeds_when_apply_pending(monkeypatch):
     StateMachine().advance(feature, APPLY_PENDING)
 
     monkeypatch.setattr("builtins.input", lambda _: "yes")
-    monkeypatch.setattr(specops_cli.certificate, "generate", lambda f: f"certificates/CHG-0001-{f}.md")
+    monkeypatch.setattr(specops_cli.certificate, "generate", lambda f: f".specops/certificates/CHG-0001-{f}.md")
 
     calls = []
 
@@ -232,14 +262,14 @@ def test_apply_proceeds_when_apply_pending(monkeypatch):
     assert any(c[:2] == ["git", "commit"] for c in calls)
     # two commits: the patch itself, then the certificate follow-up
     assert sum(1 for c in calls if c[:2] == ["git", "commit"]) == 2
-    assert any(c == ["git", "add", f"certificates/CHG-0001-{feature}.md"] for c in calls)
+    assert any(c == ["git", "add", f".specops/certificates/CHG-0001-{feature}.md"] for c in calls)
     assert StateMachine().load(feature)["stage"] == "APPLIED"
 
 
 def test_apply_only_stages_the_patchs_own_files_not_unrelated_work(monkeypatch):
     feature = "scoped-feature"
-    os.makedirs("out", exist_ok=True)
-    with open(f"out/{feature}.patch", "w") as f:
+    os.makedirs(".specops/out", exist_ok=True)
+    with open(f".specops/out/{feature}.patch", "w") as f:
         f.write(
             "diff --git a/new_thing.py b/new_thing.py\n"
             "new file mode 100644\n"
@@ -254,7 +284,7 @@ def test_apply_only_stages_the_patchs_own_files_not_unrelated_work(monkeypatch):
     StateMachine().advance(feature, APPLY_PENDING)
 
     monkeypatch.setattr("builtins.input", lambda _: "yes")
-    monkeypatch.setattr(specops_cli.certificate, "generate", lambda f: f"certificates/CHG-0001-{f}.md")
+    monkeypatch.setattr(specops_cli.certificate, "generate", lambda f: f".specops/certificates/CHG-0001-{f}.md")
 
     calls = []
 
@@ -278,7 +308,7 @@ def test_apply_replaces_stale_branch_from_a_previous_apply(monkeypatch):
     StateMachine().advance(feature, APPLY_PENDING)
 
     monkeypatch.setattr("builtins.input", lambda _: "yes")
-    monkeypatch.setattr(specops_cli.certificate, "generate", lambda f: f"certificates/CHG-0001-{f}.md")
+    monkeypatch.setattr(specops_cli.certificate, "generate", lambda f: f".specops/certificates/CHG-0001-{f}.md")
 
     calls = []
 

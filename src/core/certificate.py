@@ -3,7 +3,7 @@ import os
 import subprocess
 import time
 
-CERT_DIR = "certificates"
+CERT_DIR = ".specops/certificates"
 
 
 def _git(*args):
@@ -16,7 +16,7 @@ def _read_audit_entries(feature):
     retry — the certificate's job is to summarize what actually happened,
     not just the final attempt."""
     entries = []
-    path = "logs/specops.log"
+    path = ".specops/logs/specops.log"
     if not os.path.exists(path):
         return entries
     with open(path) as f:
@@ -95,7 +95,7 @@ def generate(feature):
     lines += [
         "- every new file in the patch also passed `git apply --check`, and "
         "Python/TypeScript syntax checks where applicable (ast.parse / "
-        "tools/ts_syntax_check.mjs) — see logs/specops.log for the full trace",
+        "tools/ts_syntax_check.mjs) — see .specops/logs/specops.log for the full trace",
         "",
         "## Human approval",
         "",

@@ -1,6 +1,6 @@
 import json, os, time
 
-STATE_DIR = "state"
+STATE_DIR = ".specops/state"
 
 # Ordered pipeline stages. apply is only allowed once a feature reaches APPLY_PENDING.
 SPEC_DRAFT = "SPEC_DRAFT"

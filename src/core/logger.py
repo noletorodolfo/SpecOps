@@ -1,5 +1,5 @@
 import json, os, time, uuid, re
-LOG_DIR = "logs"
+LOG_DIR = ".specops/logs"
 
 def _mask_secrets(s: str) -> str:
     # basic masking for tokens (heuristic)

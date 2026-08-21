@@ -1,7 +1,7 @@
 # minimal retrieve wrapper for the MVP
 import pickle, faiss, os
-INDEX_PATH = "rags/index.faiss"
-META_PATH = "rags/meta.pkl"
+INDEX_PATH = ".specops/rags/index.faiss"
+META_PATH = ".specops/rags/meta.pkl"
 from sentence_transformers import SentenceTransformer
 MODEL = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -47,7 +47,7 @@ def retrieve_topk(frameworks, query, k=4):
         if idx < 0 or idx >= len(metas):
             continue
         path = metas[idx]["path"]
-        top_dir = path.split("/")[1] if path.startswith("rags/") else path.split("/")[0]
+        top_dir = path.split("/")[2] if path.startswith(".specops/rags/") else path.split("/")[0]
         if top_dir not in allowed_dirs:
             continue
         text = open(path, "r", encoding="utf-8").read()

@@ -31,4 +31,8 @@ Work happens on `feat/<name>` branches off `main`. `specops apply` creates these
 
 ## A note on RAG notes
 
-Anything added under `rags/` gets embedded and retrieved into future prompts. Only add your own reformulated notes and patterns — never paste in copyrighted or protected text, and never anything containing a secret (see [SECURITY.md](SECURITY.md)).
+Anything added under `.specops/rags/` gets embedded and retrieved into future prompts. Only add your own reformulated notes and patterns — never paste in copyrighted or protected text, and never anything containing a secret (see [SECURITY.md](SECURITY.md)).
+
+## Working on SpecOps itself vs. testing project mode
+
+This repo dogfoods SpecOps: its own `.specops/` is what `specops brainstorm/plan/work/review/apply` reads and writes when run from inside this checkout. If you're testing project mode against some *other* directory, use `--project <path>` or `cd` there first — don't point it at this repo unless you actually mean to generate a change here.

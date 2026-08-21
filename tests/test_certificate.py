@@ -23,7 +23,7 @@ def git_repo(tmp_path, monkeypatch):
 
 
 def _write_log_entry(**fields):
-    os.makedirs("logs", exist_ok=True)
+    os.makedirs(".specops/logs", exist_ok=True)
     entry = {
         "id": "x",
         "phase": "SPEC",
@@ -37,7 +37,7 @@ def _write_log_entry(**fields):
         "timestamp": "2026-01-01T00:00:00Z",
     }
     entry.update(fields)
-    with open("logs/specops.log", "a") as f:
+    with open(".specops/logs/specops.log", "a") as f:
         f.write(json.dumps(entry) + "\n")
 
 
@@ -52,7 +52,7 @@ def test_generate_writes_a_certificate_with_the_pipeline_phases(git_repo):
     path = certificate.generate("greet-function")
 
     assert os.path.exists(path)
-    assert path.startswith("certificates/CHG-0001-greet-function")
+    assert path.startswith(".specops/certificates/CHG-0001-greet-function")
     content = open(path).read()
     assert "greet-function" in content
     assert "**SPEC**: model `mock`" in content

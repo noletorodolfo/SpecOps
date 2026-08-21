@@ -3,7 +3,7 @@ import hashlib
 from rags.retrieve import retrieve_topk
 
 def build_prompt(phase, profile, context, feature_notes):
-    governance = yaml.safe_load(open("governance.yml"))
+    governance = yaml.safe_load(open(".specops/governance.yml"))
     profile_cfg = governance["profiles"][profile][phase]
     rag_chunks, rag_sources = retrieve_topk(
         profile_cfg.get("frameworks", []), context.get("feature", ""), k=4

@@ -23,6 +23,7 @@ from core.state_machine import (
 )
 from core.logger import audit_log
 from core import certificate
+from core import project as project_mod
 
 SM = StateMachine()
 FEATURE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -115,15 +116,45 @@ def _repair_new_file_hunk_count(text):
     return "\n".join(out)
 
 
+def _repair_missing_hunk_header(text):
+    """A model occasionally omits the '@@ -0,0 +1,N @@' hunk header
+    entirely for a new file, jumping straight from '+++ b/<path>' to the
+    content lines. `git apply --check` tolerates this — it's lenient
+    about the header — but actually applying it then produces an EMPTY
+    file, since git has no line-count info to work from. Insert a
+    synthesized header (the exact count gets recomputed precisely by
+    _repair_new_file_hunk_count right after this runs)."""
+    lines = text.split("\n")
+    out = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        if line.startswith("+++ ") and (
+            i + 1 >= len(lines) or not lines[i + 1].startswith("@@ ")
+        ):
+            count = 0
+            j = i + 1
+            while j < len(lines) and not lines[j].startswith(DIFF_HEADER_PREFIXES):
+                count += 1
+                j += 1
+            out.append(f"@@ -0,0 +1,{count} @@")
+        i += 1
+    return "\n".join(out)
+
+
 def clean_diff_output(text):
     """Real models routinely wrap a diff in a markdown code fence despite
-    being told not to, forget the leading '+' on content lines, or write
-    a hunk header with the wrong line count. Repair all three, since
-    `git apply` is strict about each."""
+    being told not to, omit the hunk header, forget the leading '+' on
+    content lines, or write a hunk header with the wrong line count.
+    Repair all four, since `git apply` is strict about each — and some
+    failures (missing header) only show up as silently empty files once
+    actually applied, not as an error `git apply --check` catches."""
     text = text.strip()
     fence = DIFF_FENCE_RE.match(text)
     if fence:
         text = fence.group(1).strip()
+    text = _repair_missing_hunk_header(text)
     text = _repair_missing_plus_prefix(text)
     text = _repair_new_file_hunk_count(text)
     return text + "\n"
@@ -177,7 +208,12 @@ def _check_python_syntax(files):
     return errors
 
 
-TS_CHECKER = os.path.join(os.path.dirname(__file__), "..", "..", "tools", "ts_syntax_check.mjs")
+# The SpecOps engine's own install location (where this file lives), as
+# opposed to whatever project it's currently operating on — tools/ (and
+# its jest/ts-jest setup) belong to the engine, not to each project.
+ENGINE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+TS_CHECKER = os.path.join(ENGINE_ROOT, "tools", "ts_syntax_check.mjs")
+VALIDATORS_SH = os.path.join(ENGINE_ROOT, "tools", "validators.sh")
 
 
 def _check_typescript_syntax(files):
@@ -215,8 +251,8 @@ def cmd_brainstorm(args):
     prompt_meta = build_prompt("spec", "default", context, args.notes or "")
     resp = get_send_prompt()(prompt_meta["prompt_text"], {"meta": prompt_meta})
     audit_log("SPEC", prompt_meta, resp, status=SPEC_DRAFT)
-    os.makedirs("specs", exist_ok=True)
-    path = f"specs/{feature}.md"
+    os.makedirs(".specops/specs", exist_ok=True)
+    path = f".specops/specs/{feature}.md"
     with open(path, "w") as f:
         f.write(resp["response_text"])
     SM.advance(feature, SPEC_DRAFT)
@@ -225,7 +261,7 @@ def cmd_brainstorm(args):
 
 def cmd_plan(args):
     feature = validate_feature(args.feature)
-    spec_path = args.spec or f"specs/{feature}.md"
+    spec_path = args.spec or f".specops/specs/{feature}.md"
     spec_content = ""
     if os.path.exists(spec_path):
         with open(spec_path) as f:
@@ -234,7 +270,7 @@ def cmd_plan(args):
     prompt_meta = build_prompt("plan", "default", context, spec_content)
     resp = get_send_prompt()(prompt_meta["prompt_text"], {"meta": prompt_meta})
     audit_log("PLAN", prompt_meta, resp, status=PLAN_DRAFT)
-    path = f"plans/{feature}/plan.yaml"
+    path = f".specops/plans/{feature}/plan.yaml"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         f.write(resp["response_text"])
@@ -244,7 +280,7 @@ def cmd_plan(args):
 
 def cmd_work(args):
     feature = validate_feature(args.feature)
-    plan_path = args.plan or f"plans/{feature}/plan.yaml"
+    plan_path = args.plan or f".specops/plans/{feature}/plan.yaml"
     plan_content = ""
     if os.path.exists(plan_path):
         with open(plan_path) as f:
@@ -253,8 +289,8 @@ def cmd_work(args):
     prompt_meta = build_prompt("work", "default", context, plan_content)
     resp = get_send_prompt()(prompt_meta["prompt_text"], {"meta": prompt_meta})
     audit_log("WORK", prompt_meta, resp, status=WORK_DRAFT)
-    os.makedirs("out", exist_ok=True)
-    patch_path = f"out/{feature}.patch"
+    os.makedirs(".specops/out", exist_ok=True)
+    patch_path = f".specops/out/{feature}.patch"
     cleaned = clean_diff_output(resp["response_text"])
     with open(patch_path, "w") as f:
         f.write(cleaned)
@@ -304,7 +340,11 @@ def cmd_review(args):
     env = os.environ.copy()
     venv_bin = os.path.dirname(sys.executable)
     env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
-    result = subprocess.run(["bash", "tools/validators.sh"], env=env)
+    # validators.sh lives in the engine, not the project, and needs to know
+    # where to find its own jest/ts-jest install regardless of which
+    # project's directory it's actually validating.
+    env["SPECOPS_ENGINE_ROOT"] = ENGINE_ROOT
+    result = subprocess.run(["bash", VALIDATORS_SH], env=env)
     passed = result.returncode == 0
     if feature:
         state = SM.advance(feature, APPLY_PENDING if passed else WORK_DRAFT)
@@ -328,7 +368,7 @@ def cmd_review(args):
 
 def cmd_apply(args):
     feature = validate_feature(args.feature)
-    patch_path = f"out/{feature}.patch"
+    patch_path = f".specops/out/{feature}.patch"
     if not os.path.exists(patch_path):
         print("Patch not found:", patch_path)
         return
@@ -379,7 +419,7 @@ def cmd_apply(args):
         # out/ are gitignored on purpose (ephemeral working files) and stay
         # that way — only specs/ was ever meant to be part of the record.
         files_to_add = list(_extract_new_file_contents(patch_content).keys())
-        spec_path = f"specs/{feature}.md"
+        spec_path = f".specops/specs/{feature}.md"
         if os.path.exists(spec_path):
             files_to_add.append(spec_path)
         subprocess.run(["git", "add", *files_to_add], check=True)
@@ -407,8 +447,24 @@ def cmd_apply(args):
     print(f"Change certificate: {cert_path}")
 
 
+def cmd_project_init(args):
+    specops_dir, already_existed = project_mod.init_project(args.path or os.getcwd())
+    if already_existed:
+        print(f"Already initialized: {specops_dir}")
+    else:
+        print(f"Initialized {specops_dir}")
+        print("Edit governance.yml to match this project, then add notes under rags/.")
+
+
 def main():
     p = argparse.ArgumentParser(prog="specops")
+    p.add_argument(
+        "--project",
+        default=None,
+        help="Path to the project to operate on. Defaults to discovering a "
+        ".specops/ directory starting from the current directory and "
+        "walking up, the same way git looks for .git/.",
+    )
     sub = p.add_subparsers(dest="cmd")
     b = sub.add_parser("brainstorm")
     b.add_argument("feature")
@@ -423,7 +479,27 @@ def main():
     r.add_argument("feature", nargs="?")
     a = sub.add_parser("apply")
     a.add_argument("feature")
+    proj = sub.add_parser("project")
+    proj_sub = proj.add_subparsers(dest="project_cmd")
+    proj_init = proj_sub.add_parser("init")
+    proj_init.add_argument("path", nargs="?", default=None)
+
     args = p.parse_args()
+
+    if args.cmd == "project":
+        if args.project_cmd == "init":
+            cmd_project_init(args)
+        else:
+            proj.print_help()
+        return
+
+    if args.cmd is None:
+        p.print_help()
+        return
+
+    root = project_mod.find_project_root(explicit=args.project)
+    os.chdir(root)
+
     if args.cmd == "brainstorm":
         cmd_brainstorm(args)
     elif args.cmd == "plan":
@@ -434,8 +510,6 @@ def main():
         cmd_review(args)
     elif args.cmd == "apply":
         cmd_apply(args)
-    else:
-        p.print_help()
 
 
 if __name__ == "__main__":

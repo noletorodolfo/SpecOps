@@ -36,11 +36,21 @@ Each step writes an artifact and advances the feature's state:
 |---|---|---|
 | `brainstorm` | `.specops/specs/<feature>.md` | `SPEC_DRAFT` |
 | `plan` | `.specops/plans/<feature>/plan.yaml` | `PLAN_DRAFT` |
-| `work` | `.specops/out/<feature>.patch` | `REVIEW_PATCH` (or back to `WORK_DRAFT` if the diff is invalid) |
+| `work` | `.specops/out/<feature>.patch` | `REVIEW_PATCH` (or back to `WORK_DRAFT` if a gate fails) |
 | `review` | runs the engine's `tools/validators.sh` against this project | `APPLY_PENDING` (or back to `WORK_DRAFT` on failure) |
 | `apply` | commits the patch on a new `feat/<feature>` branch, then writes a Change Certificate (`.specops/certificates/`) in a follow-up commit | `APPLIED` |
 
 `apply` will refuse to run — loudly — if the feature hasn't reached `APPLY_PENDING`. There's no way to skip review from the CLI.
+
+### Changing existing files
+
+`work` can modify files that already exist, not just create new ones. It needs to see a file to rewrite it, so it feeds back into the prompt any file that (a) is named in the spec or plan and (b) exists on disk. To be explicit — or to include a file the plan didn't happen to name — pass `--file`, repeatable:
+
+```bash
+specops work my-feature --file src/calculator.py --file tests/test_calculator.py
+```
+
+It prints which files it pulled in as context and, after generating, which files the patch creates versus modifies. A rewrite that drops most of an existing file is refused rather than applied — see [docs/architecture.md](architecture.md#how-the-patch-is-built).
 
 ## Choosing a model
 

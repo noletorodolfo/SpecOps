@@ -23,6 +23,7 @@ from core.state_machine import (
 )
 from core.logger import audit_log
 from core import certificate
+from core import patchgen
 from core import project as project_mod
 
 SM = StateMachine()
@@ -35,165 +36,6 @@ def validate_feature(feature):
             f"Invalid feature name '{feature}': only letters, digits, '-' and '_' are allowed."
         )
     return feature
-
-
-DIFF_FENCE_RE = re.compile(r"^```(?:diff|patch)?\s*\n(.*)\n```\s*$", re.DOTALL)
-DIFF_HEADER_PREFIXES = (
-    "diff --git ", "index ", "--- ", "+++ ", "@@ ",
-    "new file mode", "deleted file mode", "similarity index",
-    "rename from", "rename to", "Binary files",
-)
-
-
-def _repair_missing_plus_prefix(text):
-    """Small models routinely get the diff headers right but forget that
-    every content line inside a hunk must start with '+'/'-'/' ' — they
-    just paste the raw file content instead. This is most dangerous in a
-    new-file hunk (--- /dev/null): a content line that happens to start
-    with a space, like ordinary Python indentation, looks exactly like a
-    valid diff *context* marker — except new-file hunks can't have
-    context lines at all, every line there is an addition, so the usual
-    "leave lines starting with ' ' alone" heuristic would silently corrupt
-    indented code. Track whether we're in a new-file hunk and, if so,
-    require every line to start with '+' with no exceptions."""
-    lines = text.split("\n")
-    out = []
-    in_hunk = False
-    is_new_file = False
-    for line in lines:
-        if line.startswith(DIFF_HEADER_PREFIXES):
-            if line.startswith("--- "):
-                is_new_file = line.strip() == "--- /dev/null"
-            in_hunk = line.startswith("@@ ")
-            out.append(line)
-        elif not in_hunk:
-            out.append(line)
-        elif line.startswith("\\ "):
-            # The "\ No newline at end of file" annotation is not a
-            # content line and must never get a '+' — it stands alone.
-            out.append(line)
-        elif line.startswith("++"):
-            # A diff marker is exactly one character; models occasionally
-            # double it up on one line ("++foo" instead of "+foo"). Drop
-            # exactly one extra leading '+', not a full lstrip, so content
-            # that itself starts with '+' (e.g. "+= 1") is left intact.
-            out.append(line[1:])
-        elif line.startswith("+"):
-            out.append(line)
-        elif is_new_file or line[:1] not in ("-", " "):
-            out.append("+" + line)
-        else:
-            out.append(line)
-    return "\n".join(out)
-
-
-HUNK_HEADER_RE = re.compile(r"^@@ -(\d+),(\d+) \+(\d+),(\d+) @@(.*)$")
-
-
-def _repair_new_file_hunk_count(text):
-    """For a single new-file hunk (@@ -0,0 +N,M @@), the model frequently
-    invents a wrong M. Recompute it from the actual number of '+' lines
-    that follow, since `git apply` rejects a mismatched count outright."""
-    lines = text.split("\n")
-    out = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        m = HUNK_HEADER_RE.match(line)
-        if m and m.group(1) == "0" and m.group(2) == "0":
-            body = []
-            j = i + 1
-            while j < len(lines) and not lines[j].startswith(DIFF_HEADER_PREFIXES):
-                body.append(lines[j])
-                j += 1
-            plus_count = sum(1 for l in body if l.startswith("+"))
-            out.append(f"@@ -0,0 +{m.group(3)},{plus_count} @@{m.group(5)}")
-            out.extend(body)
-            i = j
-            continue
-        out.append(line)
-        i += 1
-    return "\n".join(out)
-
-
-def _repair_missing_hunk_header(text):
-    """A model occasionally omits the '@@ -0,0 +1,N @@' hunk header
-    entirely for a new file, jumping straight from '+++ b/<path>' to the
-    content lines. `git apply --check` tolerates this — it's lenient
-    about the header — but actually applying it then produces an EMPTY
-    file, since git has no line-count info to work from. Insert a
-    synthesized header (the exact count gets recomputed precisely by
-    _repair_new_file_hunk_count right after this runs)."""
-    lines = text.split("\n")
-    out = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        out.append(line)
-        if line.startswith("+++ ") and (
-            i + 1 >= len(lines) or not lines[i + 1].startswith("@@ ")
-        ):
-            count = 0
-            j = i + 1
-            while j < len(lines) and not lines[j].startswith(DIFF_HEADER_PREFIXES):
-                count += 1
-                j += 1
-            out.append(f"@@ -0,0 +1,{count} @@")
-        i += 1
-    return "\n".join(out)
-
-
-def clean_diff_output(text):
-    """Real models routinely wrap a diff in a markdown code fence despite
-    being told not to, omit the hunk header, forget the leading '+' on
-    content lines, or write a hunk header with the wrong line count.
-    Repair all four, since `git apply` is strict about each — and some
-    failures (missing header) only show up as silently empty files once
-    actually applied, not as an error `git apply --check` catches."""
-    text = text.strip()
-    fence = DIFF_FENCE_RE.match(text)
-    if fence:
-        text = fence.group(1).strip()
-    text = _repair_missing_hunk_header(text)
-    text = _repair_missing_plus_prefix(text)
-    text = _repair_new_file_hunk_count(text)
-    return text + "\n"
-
-
-NEW_FILE_PATH_RE = re.compile(r"^\+\+\+ b/(.+)$")
-
-
-def _extract_new_file_contents(text):
-    """Reconstruct each new file's final content directly from an
-    already-repaired diff, without touching the working tree. Used to run
-    language-specific checks (e.g. Python syntax) before the patch is even
-    applied — `git apply --check` only validates diff *mechanics*, it has
-    no idea whether the resulting file is valid code."""
-    files = {}
-    current_path = None
-    content_lines = []
-    for line in text.split("\n"):
-        m = NEW_FILE_PATH_RE.match(line)
-        if m:
-            if current_path is not None:
-                files[current_path] = "\n".join(content_lines)
-            current_path = m.group(1)
-            content_lines = []
-        elif (
-            current_path is not None
-            and not line.startswith("@@ ")
-            and line.startswith(DIFF_HEADER_PREFIXES)
-        ):
-            files[current_path] = "\n".join(content_lines)
-            current_path = None
-            content_lines = []
-        elif current_path is not None and line.startswith("+"):
-            content_lines.append(line[1:])
-        # non-'+' lines inside a hunk body (e.g. the no-newline marker)
-        # aren't part of the file's actual content, so they're skipped.
-    if current_path is not None:
-        files[current_path] = "\n".join(content_lines)
-    return files
 
 
 def _check_python_syntax(files):
@@ -278,6 +120,47 @@ def cmd_plan(args):
     print(f"Wrote {path}")
 
 
+FILE_MENTION_RE = re.compile(r"[\w./-]+\.(?:py|ts|tsx|js|jsx|mjs|json|ya?ml|md|sh|sql)")
+
+# Existing files are fed back to the model so it can rewrite them, but a
+# whole repo won't fit in a prompt — cap it and skip anything oversized.
+MAX_CONTEXT_FILES = 8
+MAX_CONTEXT_BYTES = 60_000
+
+
+def _collect_existing_files(texts, explicit_paths=()):
+    """Find files the plan/spec refer to that actually exist on disk, so
+    the work phase can modify them instead of only creating new ones — a
+    model can't rewrite a file it has never seen."""
+    candidates = []
+    for path in explicit_paths:
+        if path and path not in candidates:
+            candidates.append(path)
+    for text in texts:
+        for match in FILE_MENTION_RE.finditer(text or ""):
+            path = match.group(0).lstrip("./")
+            if path not in candidates:
+                candidates.append(path)
+
+    collected = {}
+    total = 0
+    for path in candidates:
+        if len(collected) >= MAX_CONTEXT_FILES:
+            break
+        if path.startswith(".specops/") or not os.path.isfile(path):
+            continue
+        size = os.path.getsize(path)
+        if size > MAX_CONTEXT_BYTES or total + size > MAX_CONTEXT_BYTES:
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                collected[path] = f.read()
+        except (UnicodeDecodeError, OSError):
+            continue  # binary or unreadable; not something to rewrite anyway
+        total += size
+    return collected
+
+
 def cmd_work(args):
     feature = validate_feature(args.feature)
     plan_path = args.plan or f".specops/plans/{feature}/plan.yaml"
@@ -285,49 +168,89 @@ def cmd_work(args):
     if os.path.exists(plan_path):
         with open(plan_path) as f:
             plan_content = f.read()
+
+    spec_path = f".specops/specs/{feature}.md"
+    spec_content = ""
+    if os.path.exists(spec_path):
+        with open(spec_path) as f:
+            spec_content = f.read()
+
+    existing = _collect_existing_files([plan_content, spec_content], args.file or [])
+    notes = plan_content
+    if existing:
+        blocks = [
+            f"<<<SPECOPS_FILE {path}>>>\n{content.rstrip(chr(10))}\n<<<SPECOPS_END>>>"
+            for path, content in existing.items()
+        ]
+        notes = (
+            f"{plan_content}\n\n"
+            "EXISTING FILES (current content on disk — reproduce in full, with your "
+            "changes applied, for any you modify):\n\n" + "\n\n".join(blocks)
+        )
+        print(f"Context: {len(existing)} existing file(s) — {', '.join(existing)}")
+
     context = {"feature": feature, "plan_file": plan_path}
-    prompt_meta = build_prompt("work", "default", context, plan_content)
+    prompt_meta = build_prompt("work", "default", context, notes)
     resp = get_send_prompt()(prompt_meta["prompt_text"], {"meta": prompt_meta})
     audit_log("WORK", prompt_meta, resp, status=WORK_DRAFT)
     os.makedirs(".specops/out", exist_ok=True)
     patch_path = f".specops/out/{feature}.patch"
-    cleaned = clean_diff_output(resp["response_text"])
-    with open(patch_path, "w") as f:
-        f.write(cleaned)
 
-    # Catch malformed diffs (mock placeholder text, model hallucination,
-    # truncated output) right away, instead of only discovering it when
-    # 'apply' tries to use the patch after review already passed.
+    def fail(headline, details=()):
+        SM.advance(feature, WORK_DRAFT)
+        print(headline)
+        for line in details:
+            print(f"  {line}")
+        print("State: WORK_DRAFT. Fix the prompt/model output and re-run 'specops work'.")
+        raise SystemExit(1)
+
+    # The model returns each file's full final content; the diff itself is
+    # computed here rather than trusted, so hunk headers and context lines
+    # are correct by construction.
+    project_root = os.getcwd()
+    try:
+        files = patchgen.parse_file_blocks(resp["response_text"])
+        patchgen.validate_paths(files, project_root)
+        patch = patchgen.build_patch(files, project_root)
+    except patchgen.PatchGenError as exc:
+        fail(f"Could not build a patch from the model's output: {exc}")
+
+    # Rewriting an existing file can destroy work, unlike creating a new
+    # one — so a rewrite that drops most of the original is refused rather
+    # than silently applied.
+    shrink = patchgen.check_shrinkage(files, project_root)
+    if shrink:
+        fail("Refusing a rewrite that appears to have dropped content:", shrink)
+
+    with open(patch_path, "w") as f:
+        f.write(patch)
+
     check = subprocess.run(
         ["git", "apply", "--check", patch_path], capture_output=True, text=True
     )
     if check.returncode != 0:
-        SM.advance(feature, WORK_DRAFT)
-        print(f"Generated output is not a valid git diff: {patch_path}")
-        print(check.stderr.strip())
-        print("State: WORK_DRAFT. Fix the prompt/model output and re-run 'specops work'.")
-        raise SystemExit(1)
+        fail(
+            f"Generated patch does not apply cleanly: {patch_path}",
+            [check.stderr.strip()],
+        )
 
-    # `git apply --check` only validates diff *mechanics* — it has no idea
-    # whether the resulting file is valid code. Models occasionally squash
-    # what should be separate lines onto one physical line (using a literal
-    # ' +' instead of a real newline+marker), which still parses as a
-    # structurally valid diff but produces broken source. Catch that here,
-    # for Python files, before it ever reaches review.
-    new_files = _extract_new_file_contents(cleaned)
-    syntax_errors = _check_python_syntax(new_files) + _check_typescript_syntax(new_files)
+    # A file can be a perfectly valid diff and still be broken code, so the
+    # resulting content gets parsed too. This is exact now: `files` holds
+    # each file's final content, not a reconstruction from diff hunks.
+    syntax_errors = _check_python_syntax(files) + _check_typescript_syntax(files)
     if syntax_errors:
-        SM.advance(feature, WORK_DRAFT)
-        print(f"Generated file(s) failed a syntax check: {patch_path}")
-        for err in syntax_errors:
-            print(f"  {err}")
-        print("State: WORK_DRAFT. Fix the prompt/model output and re-run 'specops work'.")
-        raise SystemExit(1)
+        fail(f"Generated file(s) failed a syntax check: {patch_path}", syntax_errors)
 
     # A patch was generated and is structurally valid, but not yet reviewed:
     # it must pass 'specops review' before it becomes eligible for apply.
     SM.advance(feature, REVIEW_PATCH)
+    created = [p for p in files if not os.path.exists(os.path.join(project_root, p))]
+    modified = [p for p in files if p not in created]
     print(f"Patch generated: {patch_path}")
+    if created:
+        print(f"  creates: {', '.join(sorted(created))}")
+    if modified:
+        print(f"  modifies: {', '.join(sorted(modified))}")
     print("State: REVIEW_PATCH. Run 'specops review <feature>' before apply.")
 
 
@@ -418,7 +341,7 @@ def cmd_apply(args):
         # commit, silently mixing unrelated changes together. plans/ and
         # out/ are gitignored on purpose (ephemeral working files) and stay
         # that way — only specs/ was ever meant to be part of the record.
-        files_to_add = list(_extract_new_file_contents(patch_content).keys())
+        files_to_add = patchgen.paths_in_patch(patch_content)
         spec_path = f".specops/specs/{feature}.md"
         if os.path.exists(spec_path):
             files_to_add.append(spec_path)
@@ -475,6 +398,14 @@ def main():
     w = sub.add_parser("work")
     w.add_argument("feature")
     w.add_argument("--plan", default="")
+    w.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        help="Existing file to show the model so it can modify it. Repeatable. "
+        "Files named in the spec/plan are picked up automatically; use this to "
+        "be explicit.",
+    )
     r = sub.add_parser("review")
     r.add_argument("feature", nargs="?")
     a = sub.add_parser("apply")

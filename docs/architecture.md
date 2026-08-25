@@ -48,11 +48,32 @@ SPEC_DRAFT → PLAN_DRAFT → WORK_DRAFT → REVIEW_PATCH → APPLY_PENDING → 
 
 - `brainstorm` writes a spec and sets the feature's stage to `SPEC_DRAFT`.
 - `plan` writes a plan and advances to `PLAN_DRAFT`.
-- `work` generates a patch, then immediately runs `git apply --check` against it. A malformed diff (mock placeholder, truncated model output, hallucinated hunk) resets the stage to `WORK_DRAFT` right there instead of only failing later at apply time. `git apply --check` only validates diff *mechanics*, though — it has no idea whether the resulting file is valid code. New `.py` files get an `ast.parse` check, new `.ts`/`.tsx` files get a syntax-only check via the TypeScript compiler's parser (`tools/ts_syntax_check.mjs`, needs `npm install` once). Either failing also resets to `WORK_DRAFT`. Only once the patch is both a valid diff and its new files parse does the stage advance to `REVIEW_PATCH`.
+- `work` asks the model for the **complete final content** of each file it creates or changes, then builds the patch itself (see "How the patch is built" below). Files the spec/plan name that already exist on disk are fed back into the prompt, so the model can modify them rather than only create new ones. Several gates run before the stage can advance: a rewrite that dropped most of an existing file is refused, `git apply --check` must pass, and the resulting content must parse — `ast.parse` for `.py`, the TypeScript compiler's parser for `.ts`/`.tsx` (`tools/ts_syntax_check.mjs`, needs `npm install` once). Any failure resets to `WORK_DRAFT`; only a patch that clears all of them reaches `REVIEW_PATCH`.
 - `review` runs `tools/validators.sh`. Passing moves the stage to `APPLY_PENDING`; failing resets it to `WORK_DRAFT`.
 - `apply` refuses to run unless the stage is exactly `APPLY_PENDING`. It asks for an explicit `yes`, checks out a new `feat/<feature>` branch, applies the patch, and commits.
 
 State is persisted per feature in `.specops/state/<feature>.json`, so this survives across CLI invocations and Neovim sessions.
+
+## How the patch is built
+
+The work phase does **not** ask the model for a unified diff. It asks for each file's complete final content, wrapped in markers:
+
+```
+<<<SPECOPS_FILE src/calculator.py>>>
+(entire file content, with the change applied)
+<<<SPECOPS_END>>>
+```
+
+`src/core/patchgen.py` parses those blocks, reads each target's current content from disk, and computes the diff with `difflib` — so hunk headers, line numbers and context lines are *calculated*, never trusted.
+
+This is what makes editing existing files possible at all. A model asked to write an edit diff directly has to reproduce byte-exact context lines and correct line offsets from a file it may not have seen; it reliably gets that wrong, which is why the work phase was new-files-only before. Inverting it puts the mechanical part on deterministic tooling and leaves the model doing only the semantic part.
+
+Two safeguards come with that inversion, because a rewrite can destroy existing work where a new file could not:
+
+- **Path validation** — the model chooses these paths, so absolute paths and anything resolving outside the project are refused.
+- **Shrink guard** — if a rewritten file loses more than half its lines (and had at least 10 to begin with), the patch is refused. That pattern is almost always the model silently omitting content it didn't bother to repeat, not a deliberate refactor.
+
+Regressions in code the change *didn't* touch are caught later, by `review` running the project's full test suite.
 
 ## Governance and prompt building
 

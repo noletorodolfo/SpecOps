@@ -22,50 +22,11 @@ def _write_patch(feature):
         f.write("diff --git a/x b/x\n")
 
 
-def test_clean_diff_output_leaves_no_newline_marker_unprefixed():
-    raw = (
-        "--- /dev/null\n"
-        "+++ b/x.py\n"
-        "@@ -0,0 +1,1 @@\n"
-        "+print('hi')\n"
-        "\\ No newline at end of file\n"
-    )
-    out = specops_cli.clean_diff_output(raw)
-    assert "+\\ No newline" not in out
-    assert "\\ No newline at end of file" in out
-
-
-def test_clean_diff_output_preserves_indented_code_in_new_file_hunk():
-    raw = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+def f():\n    return 1\n"
-    assert specops_cli.clean_diff_output(raw) == (
-        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+def f():\n+    return 1\n"
-    )
-
-
-def test_extract_new_file_contents_reconstructs_multi_file_diff():
-    diff = (
-        "diff --git a/a.py b/a.py\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/a.py\n"
-        "@@ -0,0 +1,2 @@\n"
-        "+def f():\n"
-        "+    return 1\n"
-        "diff --git a/b.py b/b.py\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/b.py\n"
-        "@@ -0,0 +1,1 @@\n"
-        "+x = 1\n"
-    )
-    files = specops_cli._extract_new_file_contents(diff)
-    assert files == {"a.py": "def f():\n    return 1", "b.py": "x = 1"}
-
-
 def test_check_python_syntax_flags_squashed_lines():
-    # A model occasionally joins two logical lines with a literal ' +'
-    # instead of a real newline; it's still a syntactically valid diff
-    # line, but the resulting Python is broken.
+    # A file can be a clean, applicable diff and still be broken code —
+    # e.g. a model joining two logical lines onto one. The diff is
+    # generated deterministically now, but nothing about that makes the
+    # *content* valid, so this gate still matters.
     files = {
         "bad.py": "def f(self): +        return 1 +",
         "good.py": "def f():\n    return 1\n",
@@ -106,104 +67,6 @@ def test_check_typescript_syntax_ignores_unresolved_imports_and_test_globals():
 
 def test_check_typescript_syntax_skips_when_no_ts_files():
     assert specops_cli._check_typescript_syntax({"a.py": "x = 1"}) == []
-
-
-def test_clean_diff_output_repairs_each_file_in_a_multi_file_diff():
-    raw = (
-        "diff --git a/impl.py b/impl.py\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/impl.py\n"
-        "@@ -0,0 +1,999 @@\n"
-        "def greet(name):\n"
-        "    return name\n"
-        "diff --git a/test_impl.py b/test_impl.py\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/test_impl.py\n"
-        "@@ -0,0 +1,999 @@\n"
-        "+import impl\n"
-        "assert impl.greet('x')\n"
-    )
-    assert specops_cli.clean_diff_output(raw) == (
-        "diff --git a/impl.py b/impl.py\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/impl.py\n"
-        "@@ -0,0 +1,2 @@\n"
-        "+def greet(name):\n"
-        "+    return name\n"
-        "diff --git a/test_impl.py b/test_impl.py\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/test_impl.py\n"
-        "@@ -0,0 +1,2 @@\n"
-        "+import impl\n"
-        "+assert impl.greet('x')\n"
-    )
-
-
-def test_clean_diff_output_strips_markdown_fence():
-    wrapped = "```diff\n--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,1 @@\n+print('hi')\n```"
-    assert specops_cli.clean_diff_output(wrapped) == (
-        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,1 @@\n+print('hi')\n"
-    )
-
-
-def test_clean_diff_output_repairs_missing_plus_prefix():
-    raw = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\nline one\nline two\n"
-    assert specops_cli.clean_diff_output(raw) == (
-        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+line one\n+line two\n"
-    )
-
-
-def test_clean_diff_output_leaves_well_formed_diff_untouched():
-    good = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,1 @@\n+print('hi')\n"
-    assert specops_cli.clean_diff_output(good) == good
-
-
-def test_clean_diff_output_repairs_doubled_plus_marker():
-    raw = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+line one\n++line two\n"
-    assert specops_cli.clean_diff_output(raw) == (
-        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+line one\n+line two\n"
-    )
-
-
-def test_clean_diff_output_inserts_missing_hunk_header():
-    # A model sometimes jumps straight from '+++ b/<path>' to content
-    # lines, skipping the '@@ -0,0 +N,M @@' header entirely. git apply
-    # --check tolerates this but produces an empty file when applied for
-    # real, so this must be repaired, not just detected.
-    raw = "--- /dev/null\n+++ b/x.py\n+def f():\n+    return 1\n"
-    assert specops_cli.clean_diff_output(raw) == (
-        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+def f():\n+    return 1\n"
-    )
-
-
-def test_clean_diff_output_inserts_missing_hunk_header_multi_file():
-    raw = (
-        "diff --git a/a.py b/a.py\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/a.py\n"
-        "+x = 1\n"
-        "diff --git a/b.py b/b.py\n"
-        "new file mode 100644\n"
-        "--- /dev/null\n"
-        "+++ b/b.py\n"
-        "+y = 2\n"
-        "+z = 3\n"
-    )
-    out = specops_cli.clean_diff_output(raw)
-    assert "+++ b/a.py\n@@ -0,0 +1,1 @@\n+x = 1\n" in out
-    assert "+++ b/b.py\n@@ -0,0 +1,2 @@\n+y = 2\n+z = 3\n" in out
-
-
-def test_clean_diff_output_repairs_wrong_hunk_count():
-    raw = "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,999 @@\n+line one\n+line two\n"
-    assert specops_cli.clean_diff_output(raw) == (
-        "--- /dev/null\n+++ b/x.py\n@@ -0,0 +1,2 @@\n+line one\n+line two\n"
-    )
 
 
 def test_validate_feature_accepts_valid_names():
@@ -332,6 +195,130 @@ def test_apply_replaces_stale_branch_from_a_previous_apply(monkeypatch):
     # Never a plain checkout of the existing branch — that's exactly what
     # fails when freshly regenerated, untracked files collide with it.
     assert not any(c == ["git", "checkout", branch] for c in calls)
+
+
+def _stub_work_phase(monkeypatch, response_text):
+    """Drive cmd_work with a canned model response, skipping prompt
+    building and the network entirely."""
+    monkeypatch.setattr(
+        specops_cli,
+        "build_prompt",
+        lambda *a, **k: {"prompt_text": "x", "prompt_hash": "h", "rag_sources": []},
+    )
+    monkeypatch.setattr(
+        specops_cli,
+        "get_send_prompt",
+        lambda: (lambda prompt, ctx: {"response_text": response_text, "model": "stub"}),
+    )
+
+
+def _init_git_project(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    os.makedirs(".specops/plans/f", exist_ok=True)
+    with open(".specops/plans/f/plan.yaml", "w") as fh:
+        fh.write("do the thing\n")
+
+
+def test_work_creates_a_new_file_from_model_output(tmp_path, monkeypatch):
+    _init_git_project(tmp_path)
+    _stub_work_phase(
+        monkeypatch,
+        "<<<SPECOPS_FILE hello.py>>>\ndef hi():\n    return 1\n<<<SPECOPS_END>>>\n",
+    )
+
+    specops_cli.cmd_work(Namespace(feature="f", plan="", file=[]))
+
+    patch = open(".specops/out/f.patch").read()
+    assert "new file mode" in patch
+    assert "+def hi():" in patch
+    assert StateMachine().load("f")["stage"] == REVIEW_PATCH
+
+
+def test_work_can_now_modify_an_existing_file(tmp_path, monkeypatch):
+    _init_git_project(tmp_path)
+    with open("existing.py", "w") as fh:
+        fh.write("def hi():\n    return 1\n")
+
+    _stub_work_phase(
+        monkeypatch,
+        "<<<SPECOPS_FILE existing.py>>>\ndef hi():\n    return 2\n<<<SPECOPS_END>>>\n",
+    )
+
+    specops_cli.cmd_work(Namespace(feature="f", plan="", file=["existing.py"]))
+
+    patch = open(".specops/out/f.patch").read()
+    assert "new file mode" not in patch, "modifying a file must not be a creation"
+    assert "-    return 1" in patch
+    assert "+    return 2" in patch
+    assert StateMachine().load("f")["stage"] == REVIEW_PATCH
+
+
+def test_work_refuses_a_rewrite_that_dropped_most_of_the_file(tmp_path, monkeypatch):
+    _init_git_project(tmp_path)
+    with open("big.py", "w") as fh:
+        fh.write("\n".join(f"line{i} = {i}" for i in range(30)) + "\n")
+
+    _stub_work_phase(
+        monkeypatch,
+        "<<<SPECOPS_FILE big.py>>>\nline0 = 0\n<<<SPECOPS_END>>>\n",
+    )
+
+    with pytest.raises(SystemExit):
+        specops_cli.cmd_work(Namespace(feature="f", plan="", file=["big.py"]))
+
+    assert StateMachine().load("f")["stage"] == WORK_DRAFT
+    assert open("big.py").read().count("\n") == 30, "the file must be left untouched"
+
+
+def test_work_rejects_a_path_escaping_the_project(tmp_path, monkeypatch):
+    _init_git_project(tmp_path)
+    _stub_work_phase(
+        monkeypatch,
+        "<<<SPECOPS_FILE ../escaped.py>>>\nx = 1\n<<<SPECOPS_END>>>\n",
+    )
+
+    with pytest.raises(SystemExit):
+        specops_cli.cmd_work(Namespace(feature="f", plan="", file=[]))
+
+    assert StateMachine().load("f")["stage"] == WORK_DRAFT
+    assert not os.path.exists(tmp_path.parent / "escaped.py")
+
+
+def test_work_rejects_broken_python_before_review(tmp_path, monkeypatch):
+    _init_git_project(tmp_path)
+    _stub_work_phase(
+        monkeypatch,
+        "<<<SPECOPS_FILE broken.py>>>\ndef f(:\n    pass\n<<<SPECOPS_END>>>\n",
+    )
+
+    with pytest.raises(SystemExit):
+        specops_cli.cmd_work(Namespace(feature="f", plan="", file=[]))
+
+    assert StateMachine().load("f")["stage"] == WORK_DRAFT
+
+
+def test_collect_existing_files_picks_up_paths_named_in_the_plan(tmp_path):
+    with open("mentioned.py", "w") as fh:
+        fh.write("x = 1\n")
+
+    collected = specops_cli._collect_existing_files(
+        ["the plan says to update mentioned.py and also missing.py"]
+    )
+
+    assert "mentioned.py" in collected
+    assert "missing.py" not in collected, "a file that doesn't exist can't be context"
+
+
+def test_collect_existing_files_never_feeds_back_specops_internals(tmp_path):
+    os.makedirs(".specops/specs", exist_ok=True)
+    with open(".specops/specs/x.md", "w") as fh:
+        fh.write("spec text\n")
+
+    collected = specops_cli._collect_existing_files(["see .specops/specs/x.md"])
+
+    assert collected == {}
 
 
 def test_apply_aborted_when_user_declines(monkeypatch):

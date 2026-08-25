@@ -11,6 +11,7 @@ Most "AI coding assistant" setups let a model write code and a human eyeball the
 - **Governance file** (`.specops/governance.yml`) declares which frameworks and system instructions apply to each phase, per profile — one per project.
 - **RAG** pulls from that project's own operational notes (`.specops/rags/`), scoped to the frameworks relevant to the current phase — a spec-phase prompt never sees Terraform notes, and vice versa.
 - **Pluggable adapters** (mock, Hugging Face, OpenAI, Ollama) share one interface, selected via `SPECOPS_MODEL`.
+- **Deterministic patches**: the model returns each file's full content, and SpecOps computes the diff itself with `difflib`. That's what lets it modify existing files, not just create new ones — and it makes malformed-diff failures structurally impossible.
 - **State machine** tracks each feature's stage (`.specops/state/<feature>.json`) and blocks `apply` until `review` has actually passed.
 - **Change Certificate**: every `apply` produces a human-readable record (`.specops/certificates/`) of what model was used, what context it saw, which validators actually ran, and who approved it — assembled from data the pipeline already logs, not a self-report from the model.
 - **Neovim plugin** wraps the CLI with `:SpecOps*` commands, including a patch preview and confirmation before anything touches git.

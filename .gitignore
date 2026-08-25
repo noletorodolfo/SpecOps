@@ -19,6 +19,7 @@ build/
 # are the record and stay tracked; the rest is ephemeral working state.
 .specops/rags/index.faiss
 .specops/rags/meta.pkl
+.specops/index/
 .specops/logs/
 .specops/state/
 .specops/out/

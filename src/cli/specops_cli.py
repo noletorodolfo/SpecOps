@@ -25,6 +25,7 @@ from core.logger import audit_log
 from core import certificate
 from core import patchgen
 from core import project as project_mod
+from rags import code_index
 
 SM = StateMachine()
 FEATURE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -127,11 +128,21 @@ FILE_MENTION_RE = re.compile(r"[\w./-]+\.(?:py|ts|tsx|js|jsx|mjs|json|ya?ml|md|s
 MAX_CONTEXT_FILES = 8
 MAX_CONTEXT_BYTES = 60_000
 
+# Code retrieval: how many chunks to pull, and how many to keep as
+# read-only excerpts once the ones promoted to full files are removed.
+CODE_CHUNKS_K = 10
+CODE_EXCERPTS_MAX = 5
 
-def _collect_existing_files(texts, explicit_paths=()):
-    """Find files the plan/spec refer to that actually exist on disk, so
-    the work phase can modify them instead of only creating new ones — a
-    model can't rewrite a file it has never seen."""
+
+def _collect_existing_files(texts, explicit_paths=(), extra_paths=()):
+    """Find files the work phase should be able to modify, in full.
+
+    Priority order, because the byte budget is finite: files the caller
+    named with --file, then files the spec/plan mention by name, then
+    anything else offered (in practice, what code retrieval surfaced).
+    A model can't rewrite a file it has never seen, so only files included
+    here in full are eligible to be rewritten at all.
+    """
     candidates = []
     for path in explicit_paths:
         if path and path not in candidates:
@@ -141,6 +152,9 @@ def _collect_existing_files(texts, explicit_paths=()):
             path = match.group(0).lstrip("./")
             if path not in candidates:
                 candidates.append(path)
+    for path in extra_paths:
+        if path and path not in candidates:
+            candidates.append(path)
 
     collected = {}
     total = 0
@@ -175,20 +189,57 @@ def cmd_work(args):
         with open(spec_path) as f:
             spec_content = f.read()
 
-    existing = _collect_existing_files([plan_content, spec_content], args.file or [])
-    notes = plan_content
+    project_root = os.getcwd()
+
+    # Semantic retrieval over the project's own code, so the work phase can
+    # find relevant existing files even when the plan never names them.
+    # Silently inactive until `specops index` has been run.
+    retrieved = []
+    if code_index.is_indexed(project_root):
+        query = f"{feature}\n{spec_content[:1500]}\n{plan_content[:1500]}"
+        retrieved = code_index.retrieve_code(query, k=CODE_CHUNKS_K, root=project_root)
+
+    retrieved_paths = []
+    for chunk in retrieved:
+        if chunk["path"] not in retrieved_paths:
+            retrieved_paths.append(chunk["path"])
+
+    existing = _collect_existing_files(
+        [plan_content, spec_content], args.file or [], retrieved_paths
+    )
+
+    # Anything retrieval surfaced that didn't fit the full-content budget
+    # is still useful as reference — "this is how the project does X" —
+    # but only as an excerpt, and excerpts are explicitly not rewritable.
+    excerpts = [c for c in retrieved if c["path"] not in existing][:CODE_EXCERPTS_MAX]
+
+    sections = [plan_content]
     if existing:
         blocks = [
             f"<<<SPECOPS_FILE {path}>>>\n{content.rstrip(chr(10))}\n<<<SPECOPS_END>>>"
             for path, content in existing.items()
         ]
-        notes = (
-            f"{plan_content}\n\n"
+        sections.append(
             "EXISTING FILES (current content on disk — reproduce in full, with your "
             "changes applied, for any you modify):\n\n" + "\n\n".join(blocks)
         )
-        print(f"Context: {len(existing)} existing file(s) — {', '.join(existing)}")
+        print(f"Context: {len(existing)} full file(s) — {', '.join(existing)}")
+    if excerpts:
+        blocks = [
+            f"--- {c['path']} (lines {c['start_line']}-{c['end_line']}) ---\n{c['text']}"
+            for c in excerpts
+        ]
+        sections.append(
+            "RELATED CODE (read-only excerpts, shown so you can follow this "
+            "project's existing conventions — these are PARTIAL files, so never "
+            "output a SPECOPS_FILE block for any of them):\n\n" + "\n\n".join(blocks)
+        )
+        print(
+            f"Context: {len(excerpts)} code excerpt(s) — "
+            f"{', '.join(sorted({c['path'] for c in excerpts}))}"
+        )
 
+    notes = "\n\n".join(sections)
     context = {"feature": feature, "plan_file": plan_path}
     prompt_meta = build_prompt("work", "default", context, notes)
     resp = get_send_prompt()(prompt_meta["prompt_text"], {"meta": prompt_meta})
@@ -207,10 +258,32 @@ def cmd_work(args):
     # The model returns each file's full final content; the diff itself is
     # computed here rather than trusted, so hunk headers and context lines
     # are correct by construction.
-    project_root = os.getcwd()
     try:
         files = patchgen.parse_file_blocks(resp["response_text"])
         patchgen.validate_paths(files, project_root)
+    except patchgen.PatchGenError as exc:
+        fail(f"Could not build a patch from the model's output: {exc}")
+
+    # A file the model never saw in full cannot be safely rewritten: what
+    # it emits would be reconstructed from an excerpt (or from nothing),
+    # and everything it didn't see would be silently deleted. Retrieval
+    # makes this reachable — it puts partial files in the prompt — so it
+    # has to be a hard gate, not a prompt-level request.
+    blind_rewrites = [
+        path
+        for path in files
+        if path not in existing and os.path.exists(os.path.join(project_root, path))
+    ]
+    if blind_rewrites:
+        fail(
+            "Refusing to rewrite file(s) the model was not shown in full:",
+            [
+                f"{path} — re-run with: specops work {feature} --file {path}"
+                for path in sorted(blind_rewrites)
+            ],
+        )
+
+    try:
         patch = patchgen.build_patch(files, project_root)
     except patchgen.PatchGenError as exc:
         fail(f"Could not build a patch from the model's output: {exc}")
@@ -370,6 +443,18 @@ def cmd_apply(args):
     print(f"Change certificate: {cert_path}")
 
 
+def cmd_index(args):
+    from rags import code_index
+
+    print("Indexing project code...")
+    files, chunks = code_index.build_index(os.getcwd())
+    if files == 0:
+        print("No indexable source files found — nothing to index.")
+        return
+    print(f"Indexed {chunks} chunk(s) across {files} file(s).")
+    print("The work phase can now find relevant existing code on its own.")
+
+
 def cmd_project_init(args):
     specops_dir, already_existed = project_mod.init_project(args.path or os.getcwd())
     if already_existed:
@@ -410,6 +495,11 @@ def main():
     r.add_argument("feature", nargs="?")
     a = sub.add_parser("apply")
     a.add_argument("feature")
+    sub.add_parser(
+        "index",
+        help="Build the semantic index over this project's source code, so "
+        "the work phase can find relevant existing files on its own.",
+    )
     proj = sub.add_parser("project")
     proj_sub = proj.add_subparsers(dest="project_cmd")
     proj_init = proj_sub.add_parser("init")
@@ -441,6 +531,8 @@ def main():
         cmd_review(args)
     elif args.cmd == "apply":
         cmd_apply(args)
+    elif args.cmd == "index":
+        cmd_index(args)
 
 
 if __name__ == "__main__":

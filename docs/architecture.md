@@ -9,7 +9,8 @@
 | Adapters | One `send_prompt(prompt_text, context)` interface, four backends (mock, Hugging Face, OpenAI, Ollama) | `src/adapters/` |
 | Prompt builder | Loads governance rules, pulls RAG excerpts, assembles the final prompt, hashes it for audit | `src/core/prompt_builder.py` |
 | State machine | Persists each feature's current stage; gates `apply` behind `review` | `src/core/state_machine.py` |
-| RAG | The project's own operational notes, embedded with `sentence-transformers`, indexed with FAISS | `.specops/rags/`, `src/rags/retrieve.py` |
+| RAG (notes) | The project's own operational notes, embedded with `sentence-transformers`, indexed with FAISS | `.specops/rags/`, `src/rags/retrieve.py` |
+| RAG (code) | Semantic index over the project's own tracked source, so the work phase can find relevant existing files unaided | `.specops/index/`, `src/rags/code_index.py` |
 | Validators | terraform validate, kubeval, pytest, jest — run locally and in CI, against whichever project is active | `tools/validators.sh` |
 | Logger | Append-only JSON audit log of every phase's decision | `src/core/logger.py`, `.specops/logs/specops.log` |
 | Certificate | Human-readable record of what was checked and who approved a change, assembled from the audit log + git after every `apply` | `src/core/certificate.py`, `.specops/certificates/` |
@@ -31,7 +32,8 @@ some-project/
     ├── state/
     ├── logs/
     ├── out/
-    └── certificates/
+    ├── certificates/
+    └── index/
 ```
 
 `main()` resolves the target project before dispatching any subcommand: `--project <path>` if given, otherwise walk up from the current directory looking for `.specops/` (same algorithm git uses for `.git/`), then `os.chdir()` into it. Every other module (`state_machine`, `logger`, `certificate`, `retrieve`, `prompt_builder`) just uses plain paths relative to cwd (`.specops/state`, `.specops/rags/index.faiss`, etc.) — they don't know or care which project is active, `main()` already made that true by the time they run.
@@ -97,6 +99,21 @@ profiles:
 Each note in `.specops/rags/<framework>/*.md` lives under a directory that maps to a framework identifier declared in `.specops/governance.yml` (e.g. `.specops/rags/terraform/` ↔ `TERRAFORM`). `retrieve_topk(frameworks, query, k)` first filters candidates to the frameworks relevant to the current phase, then ranks by embedding similarity within that subset. `.specops/rags/patterns/` is the one exception — cross-cutting notes there are always eligible regardless of phase.
 
 This matters once the note count grows past a handful: without the filter, a spec-phase prompt could easily surface a Terraform note just because it scored well on raw cosine similarity, polluting a business-requirements answer with infrastructure jargon it never asked for.
+
+## Code retrieval: finding relevant files unaided
+
+`specops index` embeds the project's own source into a **separate** FAISS index at `.specops/index/`. Kept separate from the notes deliberately: notes are curated guidance that governance scopes by phase, code is raw project material, and mixing them would let a stray source file outrank the guidance a phase is supposed to follow.
+
+File selection comes from `git ls-files`, which already honours `.gitignore` and skips untracked junk — reimplementing that filter by hand would only approximate it. Vendored/generated paths (`node_modules`, lockfiles, `dist`), unknown extensions and oversized files are dropped, and `.specops/` itself is excluded so SpecOps' own generated specs never come back as "code". Files are chunked into overlapping 60-line windows tagged with their real line ranges.
+
+The work phase then feeds retrieval results in at **two tiers**, which is the part that matters for safety:
+
+- **Full files** — the highest-ranked paths, included whole (within the same byte budget as `--file`). Only these are eligible to be rewritten.
+- **Read-only excerpts** — everything else retrieval surfaced, shown as partial snippets so the model can follow existing conventions.
+
+A model that only saw an excerpt cannot safely rewrite that file: whatever it didn't see would be silently deleted. So that isn't left to prompt wording — `work` refuses outright if the model emits a file block for a path that exists on disk but wasn't provided in full, and tells you to re-run with `--file <path>`.
+
+Retrieval is inert until `specops index` has been run, so a project that never indexes behaves exactly as before.
 
 ## Adapters
 

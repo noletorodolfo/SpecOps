@@ -2,8 +2,7 @@
 import pickle, faiss, os
 INDEX_PATH = ".specops/rags/index.faiss"
 META_PATH = ".specops/rags/meta.pkl"
-from sentence_transformers import SentenceTransformer
-MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+from rags import embedding
 
 # Maps governance.yml framework identifiers to their rags/<dir> notes.
 # "patterns" is cross-cutting and always eligible regardless of framework.
@@ -37,7 +36,7 @@ def retrieve_topk(frameworks, query, k=4):
     allowed_dirs = {FRAMEWORK_DIRS[f] for f in frameworks if f in FRAMEWORK_DIRS}
     allowed_dirs.add("patterns")
 
-    q_emb = MODEL.encode([query])
+    q_emb = embedding.encode([query])
     search_k = min(len(metas), max(k * 4, k))
     D, I = index.search(q_emb, search_k)
 

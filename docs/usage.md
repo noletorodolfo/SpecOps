@@ -52,6 +52,18 @@ specops work my-feature --file src/calculator.py --file tests/test_calculator.py
 
 It prints which files it pulled in as context and, after generating, which files the patch creates versus modifies. A rewrite that drops most of an existing file is refused rather than applied — see [docs/architecture.md](architecture.md#how-the-patch-is-built).
 
+### Letting it find the files itself
+
+Index the project's source once and `work` will locate relevant existing files on its own, without the plan having to name them:
+
+```bash
+specops index
+```
+
+Re-run it after significant changes to keep the index current. Highly-ranked files are included in full (and are therefore editable); the rest come in as read-only excerpts so the model can follow existing conventions. If it tries to rewrite a file it only saw an excerpt of, `work` refuses and tells you to re-run with `--file <path>`.
+
+Until you run `specops index`, retrieval is simply inactive — everything behaves as it did before.
+
 ## Choosing a model
 
 By default everything runs against `adapter_mock`, which is enough to exercise the full pipeline (including a syntactically valid patch for the `work` phase) without any credentials. To use a real model:

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # simple chunker + FAISS indexer for notes (requires sentence-transformers, faiss)
-import os, glob, pickle
-from sentence_transformers import SentenceTransformer
+import os, glob, pickle, sys
 import faiss
 
-MODEL_NAME = "all-MiniLM-L6-v2"
-MODEL = SentenceTransformer(MODEL_NAME)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+from rags import embedding
+
 INDEX_PATH = ".specops/rags/index.faiss"
 META_PATH = ".specops/rags/meta.pkl"
 
@@ -20,7 +20,7 @@ def ingest():
     if not texts:
         print("No .specops/rags/*.md files found.")
         return
-    embs = MODEL.encode(texts)
+    embs = embedding.encode(texts)
     d = embs.shape[1]
     index = faiss.IndexFlatL2(d)
     index.add(embs)

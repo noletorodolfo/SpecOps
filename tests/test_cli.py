@@ -299,6 +299,73 @@ def test_work_rejects_broken_python_before_review(tmp_path, monkeypatch):
     assert StateMachine().load("f")["stage"] == WORK_DRAFT
 
 
+def test_work_refuses_to_rewrite_a_file_it_was_not_shown_in_full(tmp_path, monkeypatch):
+    """Retrieval puts *excerpts* of files in the prompt. If the model
+    then emits one of those as a full file, everything it didn't see
+    would be silently deleted — so that must be refused outright."""
+    _init_git_project(tmp_path)
+    with open("untouched.py", "w") as fh:
+        fh.write("def a():\n    return 1\n\n\ndef b():\n    return 2\n")
+
+    # the model answers with a file it was never given in full
+    _stub_work_phase(
+        monkeypatch,
+        "<<<SPECOPS_FILE untouched.py>>>\ndef a():\n    return 99\n<<<SPECOPS_END>>>\n",
+    )
+
+    with pytest.raises(SystemExit):
+        specops_cli.cmd_work(Namespace(feature="f", plan="", file=[]))
+
+    assert StateMachine().load("f")["stage"] == WORK_DRAFT
+    assert "def b():" in open("untouched.py").read(), "the file must be untouched"
+
+
+def test_work_allows_rewriting_a_file_provided_in_full(tmp_path, monkeypatch):
+    """The mirror of the guard above: with --file, the same rewrite is
+    allowed, because now the model actually saw what it's replacing."""
+    _init_git_project(tmp_path)
+    with open("shown.py", "w") as fh:
+        fh.write("def a():\n    return 1\n")
+
+    _stub_work_phase(
+        monkeypatch,
+        "<<<SPECOPS_FILE shown.py>>>\ndef a():\n    return 99\n<<<SPECOPS_END>>>\n",
+    )
+
+    specops_cli.cmd_work(Namespace(feature="f", plan="", file=["shown.py"]))
+
+    assert StateMachine().load("f")["stage"] == REVIEW_PATCH
+    assert "+    return 99" in open(".specops/out/f.patch").read()
+
+
+def test_work_still_allows_creating_brand_new_files(tmp_path, monkeypatch):
+    """The guard keys on existing-and-unseen, so a genuinely new file
+    must still pass without needing --file."""
+    _init_git_project(tmp_path)
+    _stub_work_phase(
+        monkeypatch,
+        "<<<SPECOPS_FILE fresh.py>>>\nx = 1\n<<<SPECOPS_END>>>\n",
+    )
+
+    specops_cli.cmd_work(Namespace(feature="f", plan="", file=[]))
+
+    assert StateMachine().load("f")["stage"] == REVIEW_PATCH
+
+
+def test_collect_existing_files_prefers_explicit_over_retrieved(tmp_path):
+    for name in ("explicit.py", "mentioned.py", "retrieved.py"):
+        with open(name, "w") as fh:
+            fh.write("x = 1\n")
+
+    collected = specops_cli._collect_existing_files(
+        ["the plan mentions mentioned.py"],
+        explicit_paths=["explicit.py"],
+        extra_paths=["retrieved.py"],
+    )
+
+    assert list(collected) == ["explicit.py", "mentioned.py", "retrieved.py"]
+
+
 def test_collect_existing_files_picks_up_paths_named_in_the_plan(tmp_path):
     with open("mentioned.py", "w") as fh:
         fh.write("x = 1\n")

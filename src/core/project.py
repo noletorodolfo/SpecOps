@@ -14,6 +14,7 @@ DATA_SUBDIRS = [
     "logs",
     "out",
     "certificates",
+    "index",
 ]
 
 # Raw string: the work phase's instructions embed literal \n escapes that

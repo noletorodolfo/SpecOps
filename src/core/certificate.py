@@ -93,9 +93,12 @@ def generate(feature):
     else:
         lines.append("- (no validators recorded)")
     lines += [
-        "- every new file in the patch also passed `git apply --check`, and "
+        "- every file in the patch also passed `git apply --check`, and "
         "Python/TypeScript syntax checks where applicable (ast.parse / "
         "tools/ts_syntax_check.mjs) — see .specops/logs/specops.log for the full trace",
+        "- a validator marked `(patch applied)` ran against this change applied "
+        "to a throwaway worktree, so the generated code was genuinely executed; "
+        "one marked `(working tree)` ran against the unpatched project only",
         "",
         "## Human approval",
         "",

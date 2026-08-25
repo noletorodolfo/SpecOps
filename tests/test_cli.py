@@ -1,3 +1,4 @@
+import json
 import os
 import types
 from argparse import Namespace
@@ -407,6 +408,78 @@ def test_apply_aborted_when_user_declines(monkeypatch):
 
     assert called["git"] is False
     assert StateMachine().load(feature)["stage"] == APPLY_PENDING
+
+
+def _init_repo_with_patch(tmp_path, patch_body):
+    """A real git repo plus a real patch, so review exercises the actual
+    sandbox path rather than the no-patch fallback."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, check=True)
+    with open("placeholder.py", "w") as fh:
+        fh.write("x = 1\n")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=tmp_path, check=True)
+
+    os.makedirs(".specops/out", exist_ok=True)
+    with open(".specops/out/f.patch", "w") as fh:
+        fh.write(patch_body)
+    StateMachine().advance("f", REVIEW_PATCH)
+
+
+def _generated_test_patch(assertion):
+    return (
+        "diff --git a/test_generated.py b/test_generated.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/test_generated.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+def test_generated():\n"
+        f"+    assert {assertion}\n"
+    )
+
+
+def test_review_actually_runs_the_generated_tests(tmp_path):
+    """The generated code only exists inside the patch, so review has to
+    apply it somewhere to execute it. Before, a failing generated test
+    passed review because the file wasn't on disk yet."""
+    _init_repo_with_patch(tmp_path, _generated_test_patch("1 == 2"))
+
+    with pytest.raises(SystemExit):
+        specops_cli.cmd_review(Namespace(feature="f"))
+
+    assert StateMachine().load("f")["stage"] == WORK_DRAFT
+    assert not os.path.exists("test_generated.py"), (
+        "review must not leave the patch applied in the real working tree"
+    )
+
+
+def test_review_passes_when_the_generated_tests_pass(tmp_path):
+    _init_repo_with_patch(tmp_path, _generated_test_patch("1 == 1"))
+
+    specops_cli.cmd_review(Namespace(feature="f"))
+
+    assert StateMachine().load("f")["stage"] == APPLY_PENDING
+    assert not os.path.exists("test_generated.py")
+
+
+def test_review_records_that_it_validated_the_patched_state(tmp_path):
+    _init_repo_with_patch(tmp_path, _generated_test_patch("1 == 1"))
+
+    specops_cli.cmd_review(Namespace(feature="f"))
+
+    entries = [
+        json.loads(line)
+        for line in open(".specops/logs/specops.log")
+        if line.strip()
+    ]
+    review = [e for e in entries if e["phase"] == "REVIEW"][-1]
+    assert "patch applied" in review["validators_run"][0], (
+        "the audit log — and therefore the certificate — must say which "
+        "state the validators actually ran against"
+    )
 
 
 def test_review_pass_sets_apply_pending(monkeypatch):

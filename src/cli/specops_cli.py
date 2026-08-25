@@ -25,6 +25,7 @@ from core.logger import audit_log
 from core import certificate
 from core import patchgen
 from core import project as project_mod
+from core import sandbox
 from rags import code_index
 
 SM = StateMachine()
@@ -329,7 +330,6 @@ def cmd_work(args):
 
 def cmd_review(args):
     feature = validate_feature(args.feature) if args.feature else None
-    print("Running review (validators)...")
     # Ensure venv-only tools (e.g. pytest) resolve even when this process was
     # launched via the venv's console-script entrypoint (e.g. from Neovim)
     # without the venv being activated in the caller's shell.
@@ -340,8 +340,38 @@ def cmd_review(args):
     # where to find its own jest/ts-jest install regardless of which
     # project's directory it's actually validating.
     env["SPECOPS_ENGINE_ROOT"] = ENGINE_ROOT
-    result = subprocess.run(["bash", VALIDATORS_SH], env=env)
-    passed = result.returncode == 0
+
+    project_root = os.getcwd()
+    patch_path = f".specops/out/{feature}.patch" if feature else None
+    sandboxed = bool(
+        patch_path and os.path.exists(patch_path) and sandbox.is_git_repo(project_root)
+    )
+
+    if not sandboxed:
+        # No patch to validate (bare `specops review`), or not a git repo:
+        # fall back to checking the tree as it stands.
+        print("Running review (validators, current working tree)...")
+        passed = subprocess.run(["bash", VALIDATORS_SH], env=env).returncode == 0
+        scope = "tools/validators.sh (working tree)"
+    else:
+        # Validate what `apply` would actually commit — HEAD plus this
+        # patch — so the generated code is genuinely exercised. Running
+        # against the unpatched tree would never execute a single line of
+        # what the model just wrote.
+        print("Running review (validators, with the patch applied)...")
+        try:
+            with open(patch_path) as f:
+                touched = patchgen.paths_in_patch(f.read())
+            with sandbox.patched_worktree(project_root, patch_path, touched) as tree:
+                passed = (
+                    subprocess.run(["bash", VALIDATORS_SH], env=env, cwd=tree).returncode
+                    == 0
+                )
+        except sandbox.SandboxError as exc:
+            print(f"Could not reproduce the post-apply state: {exc}")
+            passed = False
+        scope = "tools/validators.sh (patch applied)"
+
     if feature:
         state = SM.advance(feature, APPLY_PENDING if passed else WORK_DRAFT)
         prompt_meta = {"prompt_hash": "n/a", "rag_sources": []}
@@ -350,7 +380,7 @@ def cmd_review(args):
             "REVIEW",
             prompt_meta,
             resp,
-            validators_run=["tools/validators.sh"],
+            validators_run=[scope],
             status=state["stage"],
             feature=feature,
         )

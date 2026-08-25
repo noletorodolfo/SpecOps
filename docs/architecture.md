@@ -51,7 +51,7 @@ SPEC_DRAFT → PLAN_DRAFT → WORK_DRAFT → REVIEW_PATCH → APPLY_PENDING → 
 - `brainstorm` writes a spec and sets the feature's stage to `SPEC_DRAFT`.
 - `plan` writes a plan and advances to `PLAN_DRAFT`.
 - `work` asks the model for the **complete final content** of each file it creates or changes, then builds the patch itself (see "How the patch is built" below). Files the spec/plan name that already exist on disk are fed back into the prompt, so the model can modify them rather than only create new ones. Several gates run before the stage can advance: a rewrite that dropped most of an existing file is refused, `git apply --check` must pass, and the resulting content must parse — `ast.parse` for `.py`, the TypeScript compiler's parser for `.ts`/`.tsx` (`tools/ts_syntax_check.mjs`, needs `npm install` once). Any failure resets to `WORK_DRAFT`; only a patch that clears all of them reaches `REVIEW_PATCH`.
-- `review` runs `tools/validators.sh`. Passing moves the stage to `APPLY_PENDING`; failing resets it to `WORK_DRAFT`.
+- `review` runs `tools/validators.sh` against the patch **applied** — see "Review validates the patched state" below. Passing moves the stage to `APPLY_PENDING`; failing resets it to `WORK_DRAFT`.
 - `apply` refuses to run unless the stage is exactly `APPLY_PENDING`. It asks for an explicit `yes`, checks out a new `feat/<feature>` branch, applies the patch, and commits.
 
 State is persisted per feature in `.specops/state/<feature>.json`, so this survives across CLI invocations and Neovim sessions.
@@ -76,6 +76,18 @@ Two safeguards come with that inversion, because a rewrite can destroy existing 
 - **Shrink guard** — if a rewritten file loses more than half its lines (and had at least 10 to begin with), the patch is refused. That pattern is almost always the model silently omitting content it didn't bother to repeat, not a deliberate refactor.
 
 Regressions in code the change *didn't* touch are caught later, by `review` running the project's full test suite.
+
+## Review validates the patched state
+
+`review` runs the project's validators against **HEAD plus the patch**, in a throwaway `git worktree`, never against the working tree as it stands.
+
+That distinction is the whole point. The generated code exists only inside `.specops/out/<feature>.patch` until `apply` runs, so validating the unpatched tree never executes a single line of what the model just wrote — it only confirms the project's *pre-existing* tests still pass, which for a new project is trivially true. A patch whose only test was `assert 1 == 2` passed review, while the certificate reported that validators had run.
+
+`src/core/sandbox.py` reproduces the post-apply state exactly: a detached worktree at HEAD, plus the working-tree version of every file the patch touches (the patch was computed against the working tree, so a target with uncommitted edits wouldn't match a clean checkout), then `git apply`. That combination is precisely what `apply` would commit, since `apply` stages only the patch's own files. Dependency directories (`node_modules`, `.venv`) are symlinked in — a project's tests usually can't run without them, and copying them would dominate review's runtime.
+
+The worktree is removed in a `finally`, so a crashing validator can't leave one registered. The user's own working tree is never modified at any point.
+
+`review` falls back to checking the tree as-is when there's no patch to validate (a bare `specops review`) or the project isn't a git repo. The audit log — and therefore the certificate — records which of the two actually ran.
 
 ## Governance and prompt building
 

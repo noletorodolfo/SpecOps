@@ -37,7 +37,7 @@ Each step writes an artifact and advances the feature's state:
 | `brainstorm` | `.specops/specs/<feature>.md` | `SPEC_DRAFT` |
 | `plan` | `.specops/plans/<feature>/plan.yaml` | `PLAN_DRAFT` |
 | `work` | `.specops/out/<feature>.patch` | `REVIEW_PATCH` (or back to `WORK_DRAFT` if a gate fails) |
-| `review` | runs the engine's `tools/validators.sh` against this project | `APPLY_PENDING` (or back to `WORK_DRAFT` on failure) |
+| `review` | runs the engine's `tools/validators.sh` against the patch **applied**, in a throwaway worktree | `APPLY_PENDING` (or back to `WORK_DRAFT` on failure) |
 | `apply` | commits the patch on a new `feat/<feature>` branch, then writes a Change Certificate (`.specops/certificates/`) in a follow-up commit | `APPLIED` |
 
 `apply` will refuse to run — loudly — if the feature hasn't reached `APPLY_PENDING`. There's no way to skip review from the CLI.
@@ -111,4 +111,6 @@ Each command prompts for a feature name, runs the matching CLI command through `
 bash tools/validators.sh
 ```
 
-Runs `terraform validate` (if `*.tf` files exist), `kubeval` (if `k8s/*.yaml` files exist), `pytest`, and `jest` (if any `*.test.ts`/`*.spec.ts` files exist — needs `npm install` once). This is exactly what `specops review` and CI both run — if it passes locally, it'll pass in CI.
+Runs `terraform validate` (if `*.tf` files exist), `kubeval` (if `k8s/*.yaml` files exist), `pytest`, and `jest` (if any `*.test.ts`/`*.spec.ts` files exist — needs `npm install` once). This is the same script `specops review` and CI both run.
+
+Run directly like this it checks your working tree as it stands. `specops review <feature>` runs it against the patch applied instead, so the generated code is actually executed — see [docs/architecture.md](architecture.md#review-validates-the-patched-state).
